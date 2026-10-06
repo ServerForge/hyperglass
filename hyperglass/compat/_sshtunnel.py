@@ -905,7 +905,6 @@ class SSHTunnelForwarder:
         if host_pkey_directories is not None:
             paramiko_key_types = {
                 "rsa": paramiko.RSAKey,
-                "dsa": paramiko.DSSKey,
                 "ecdsa": paramiko.ECDSAKey,
                 "ed25519": paramiko.Ed25519Key,
             }
@@ -1103,7 +1102,6 @@ class SSHTunnelForwarder:
             if key_type
             else (
                 paramiko.RSAKey,
-                paramiko.DSSKey,
                 paramiko.ECDSAKey,
                 paramiko.Ed25519Key,
             )

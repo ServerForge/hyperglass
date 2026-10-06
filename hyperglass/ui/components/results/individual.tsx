@@ -80,7 +80,7 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
       case 'success':
         e = level;
         break;
-      case 'warning' || 'error':
+      case 'warning':
         e = 'warning';
         break;
     }

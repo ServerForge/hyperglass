@@ -86,14 +86,14 @@ const GroupFilter = (props: React.PropsWithChildren<UseRadioProps>): JSX.Element
   const { children, ...rest } = props;
   const {
     getInputProps,
-    getCheckboxProps,
+    getRadioProps,
     getLabelProps,
     htmlProps,
     state: { isChecked },
   } = useRadio(rest);
   const label = getLabelProps();
   const input = getInputProps();
-  const checkbox = getCheckboxProps();
+  const checkbox = getRadioProps();
 
   return (
     <Box as="label" {...label}>

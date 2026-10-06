@@ -114,7 +114,7 @@ const All = (props: WrapperProps): JSX.Element => (
 /**
  * Title component which renders sub-components based on the `title_mode` configuration variable.
  */
-export const Title = (props: FlexProps): JSX.Element => {
+export const Title = (props: Omit<FlexProps, keyof MotionProps>): JSX.Element => {
   const { fontSize, ...rest } = props;
   const { web } = useConfig();
   const { titleMode } = web.text;
