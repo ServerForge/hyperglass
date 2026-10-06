@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Security
+- Query targets are now restricted to characters used by IP prefixes, BGP communities and AS path expressions. Previously, crafted BGP community/AS path queries (or IPv6 zone IDs, e.g. `2001:db8::1%x"; id; "`) could inject commands into the device CLI, or into a shell on FRR, BIRD and TNSR.
+- **Behavior change:** regex `condition` patterns on directive rules now must match the entire query target (`re.fullmatch`) instead of only its beginning.
+
 ### Fixed
+- Device commands no longer block the event loop; one slow device previously stalled every request in the worker.
+- Replaced the process-wide `SIGALRM` request timeout, which stayed armed after failed queries and could raise timeouts in unrelated requests.
+- SSH sessions are now closed when a command fails.
 - [#280](https://github.com/thatmattlove/hyperglass/issues/280): Fix: `condition: None` caused error in directive @Jimmy01240397
 - [#306](https://github.com/thatmattlove/hyperglass/issues/306): Fix: allow integer values in ext_community_list_raw field for Arista BGP - @cooperwinser
 - [#311](https://github.com/thatmattlove/hyperglass/issues/311): Fix: device and directive errors.

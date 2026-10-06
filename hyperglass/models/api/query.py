@@ -1,6 +1,7 @@
 """Input query validation model."""
 
 # Standard Library
+import re
 import typing as t
 import hashlib
 import secrets
@@ -25,6 +26,22 @@ from ..config.devices import Device
 QueryLocation = Annotated[str, StringConstraints(strict=True, min_length=1, strip_whitespace=True)]
 QueryTarget = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 QueryType = Annotated[str, StringConstraints(strict=True, min_length=1, strip_whitespace=True)]
+
+# Query targets are interpolated into CLI commands, some of which are run through a shell (e.g.
+# `vtysh -c "..."`). Only allow characters needed by IP prefixes, BGP communities, and AS path
+# regular expressions/masks across the supported platforms.
+TARGET_ALLOWED_CHARS = re.compile(r"[A-Za-z0-9 .:/_\-+*?^$()\[\],=|]+")
+# Contextually unsafe sequences built from otherwise-allowed characters:
+#   - `$` other than a regex end anchor (shell expansion, e.g. `$(cmd)`)
+#   - `|` other than regex alternation (CLI/shell pipe, e.g. `| save /tmp/x`)
+#   - `[` followed by a command (RouterOS command substitution, e.g. `[/system reboot]`)
+TARGET_UNSAFE_SEQUENCES = re.compile(r"\$(?![\s|)\]]|$)|\|\s*(?![0-9(^_.\[])|\[\s*[/:A-Za-z]")
+
+
+def validate_target_characters(target: str) -> None:
+    """Ensure a query target contains no characters that could alter the executed command."""
+    if TARGET_ALLOWED_CHARS.fullmatch(target) is None or TARGET_UNSAFE_SEQUENCES.search(target):
+        raise InputValidationError(error="Target contains invalid characters", target=target)
 
 
 class SimpleQuery(BaseModel):
@@ -61,6 +78,8 @@ class Query(BaseModel):
 
         state = use_state()
         self._state = state
+        # Resolve the device once; each state lookup is a Redis read & unpickle of all devices.
+        self._device = state.devices[self.query_location]
 
         query_directives = self.device.directives.matching(self.query_type)
 
@@ -106,6 +125,9 @@ class Query(BaseModel):
 
     def validate_query_target(self) -> None:
         """Validate a query target after all fields/relationships have been initialized."""
+        targets = self.query_target if isinstance(self.query_target, list) else [self.query_target]
+        for target in targets:
+            validate_target_characters(target)
         # Run config/rule-based validations.
         self.directive.validate_target(self.query_target)
         # Run plugin-based validations.
@@ -123,7 +145,7 @@ class Query(BaseModel):
     @property
     def device(self) -> Device:
         """Get this query's device object by query_location."""
-        return self._state.devices[self.query_location]
+        return self._device
 
     @field_validator("query_location")
     def validate_query_location(cls, value):

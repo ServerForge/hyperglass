@@ -5,6 +5,7 @@ https://github.com/ktbyers/netmiko
 
 # Standard Library
 import math
+import asyncio
 from typing import Iterable
 
 # Third Party
@@ -83,16 +84,15 @@ class NetmikoConnection(SSHConnection):
                 # private key password.
                 driver_kwargs["passphrase"] = self.device.credential.password.get_secret_value()
 
+        def send_commands() -> Iterable:
+            # Netmiko is synchronous; run it in a worker thread to avoid blocking the event loop.
+            with ConnectHandler(**driver_kwargs) as nm_connect_direct:
+                return tuple(
+                    nm_connect_direct.send_command(query, **send_args) for query in self.query
+                )
+
         try:
-            nm_connect_direct = ConnectHandler(**driver_kwargs)
-
-            responses = ()
-
-            for query in self.query:
-                raw = nm_connect_direct.send_command(query, **send_args)
-                responses += (raw,)
-
-            nm_connect_direct.disconnect()
+            responses = await asyncio.to_thread(send_commands)
 
         except NetMikoTimeoutException as scrape_error:
             raise DeviceTimeout(error=scrape_error, device=self.device) from scrape_error

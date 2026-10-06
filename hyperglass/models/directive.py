@@ -208,7 +208,7 @@ class RuleWithPattern(Rule):
                 pattern = re.compile(".+", re.IGNORECASE)
             else:
                 pattern = re.compile(self.condition, re.IGNORECASE)
-            is_match = pattern.match(value)
+            is_match = pattern.fullmatch(value)
 
             if is_match and self.action == "permit":
                 return True

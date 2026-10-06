@@ -7,8 +7,8 @@ http client API calls, returns the output back to the front end.
 """
 
 # Standard Library
-import signal
-from typing import TYPE_CHECKING, Any, Dict, Union, Callable
+import asyncio
+from typing import TYPE_CHECKING, Dict, Union
 
 # Project
 from hyperglass.log import log
@@ -34,15 +34,6 @@ def map_driver(driver_name: str) -> "Connection":
     return NetmikoConnection
 
 
-def handle_timeout(**exc_args: Any) -> Callable:
-    """Return a function signal can use to raise a timeout exception."""
-
-    def handler(*args: Any, **kwargs: Any) -> None:
-        raise DeviceTimeout(**exc_args)
-
-    return handler
-
-
 async def execute(query: "Query") -> Union["OutputDataModel", str]:
     """Initiate query validation and execution."""
     params = use_state("params")
@@ -53,18 +44,18 @@ async def execute(query: "Query") -> Union["OutputDataModel", str]:
     mapped_driver = map_driver(query.device.driver)
     driver: "Connection" = mapped_driver(query.device, query)
 
-    signal.signal(
-        signal.SIGALRM,
-        handle_timeout(error=TimeoutError("Connection timed out"), device=query.device),
-    )
-    signal.alarm(params.request_timeout - 1)
+    async def collect():
+        if query.device.proxy:
+            proxy = driver.setup_proxy()
+            with proxy() as tunnel:
+                return await driver.collect(tunnel.local_bind_host, tunnel.local_bind_port)
+        return await driver.collect()
 
-    if query.device.proxy:
-        proxy = driver.setup_proxy()
-        with proxy() as tunnel:
-            response = await driver.collect(tunnel.local_bind_host, tunnel.local_bind_port)
-    else:
-        response = await driver.collect()
+    try:
+        response = await asyncio.wait_for(collect(), timeout=params.request_timeout - 1)
+    except asyncio.TimeoutError as err:
+        error = TimeoutError("Connection timed out")
+        raise DeviceTimeout(error=error, device=query.device) from err
 
     output = await driver.response(response)
 
@@ -84,7 +75,5 @@ async def execute(query: "Query") -> Union["OutputDataModel", str]:
         # error.
         if not output:
             raise ResponseEmpty(query=query)
-
-    signal.alarm(0)
 
     return output
