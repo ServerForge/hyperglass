@@ -100,6 +100,7 @@ def start(*, log_level: t.Union[str, int], workers: int) -> None:
         host=str(Settings.host),
         port=Settings.port,
         workers=workers,
+        forwarded_allow_ips=Settings.trusted_proxies,
         log_level=log_level,
         log_config={
             "version": 1,

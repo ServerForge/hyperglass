@@ -80,6 +80,11 @@ class Messages(HyperglassModel):
         title="No Output",
         description="Displayed when hyperglass can connect to a device and execute a query, but the response is empty.",
     )
+    rate_limited: str = Field(
+        "Too many queries. Please wait a moment and try again.",
+        title="Rate Limited",
+        description="Displayed when a client exceeds the configured query [rate limit](/fixme).",
+    )
 
     def has(self, attr: str) -> bool:
         """Determine if message type exists in Messages model."""

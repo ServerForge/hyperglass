@@ -50,6 +50,9 @@ class HyperglassSettings(BaseSettings):
     port: int = 8001
     ca_cert: t.Optional[FilePath] = None
     container: bool = False
+    # Reverse proxies trusted to set the client address via X-Forwarded-For (comma-separated IPs
+    # or networks, or `*`), used for logging & rate limiting.
+    trusted_proxies: str = "127.0.0.1,::1"
 
     def __init__(self, **kwargs) -> None:
         """Create hyperglass Settings instance."""
@@ -78,6 +81,7 @@ class HyperglassSettings(BaseSettings):
                 "redis_dsn",
                 "host",
                 "port",
+                "trusted_proxies",
             )
         )
         for attr in params:

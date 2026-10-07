@@ -61,7 +61,7 @@ async def info(params: Params) -> APIParams:
     return params.export_api()
 
 
-@post("/api/query", dependencies={"_state": Provide(get_state)})
+@post("/api/query", dependencies={"_state": Provide(get_state)}, opt={"rate_limit": True})
 async def query(_state: HyperglassState, request: Request, data: Query) -> QueryResponse:
     """Ingest request data pass it to the backend application to perform the query."""
 

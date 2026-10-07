@@ -5,7 +5,7 @@ import typing as t
 
 # Third Party
 from litestar import Request, Response
-from litestar.exceptions import ValidationException
+from litestar.exceptions import ValidationException, TooManyRequestsException
 
 # Project
 from hyperglass.log import log
@@ -54,10 +54,23 @@ def default_handler(request: Request, exc: BaseException) -> Response:
 
 def http_handler(request: Request, exc: BaseException) -> Response:
     """Handle web server errors."""
+    if isinstance(exc, TooManyRequestsException):
+        log.bind(method=request.method, path=request.url.path, client=request.client).warning(
+            "Rate limit exceeded"
+        )
+        params = use_state("params")
+        return Response(
+            {"output": params.messages.rate_limited, "level": "warning", "keywords": []},
+            status_code=exc.status_code,
+            # Litestar only sets RateLimit-* headers; Retry-After is more widely understood.
+            headers={**exc.headers, "Retry-After": exc.headers.get("RateLimit-Reset", "60")},
+        )
+
     log.bind(method=request.method, path=request.url.path, detail=exc.detail).critical("HTTP Error")
     return Response(
         {"output": exc.detail, "level": "danger", "keywords": []},
         status_code=exc.status_code,
+        headers=exc.headers,
     )
 
 

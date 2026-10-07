@@ -1,0 +1,24 @@
+## Rate Limiting
+
+hyperglass limits how many queries a single client may submit, to protect your devices from being overwhelmed. Only queries are rate limited; the web UI and other API endpoints are not. When a client exceeds the limit, hyperglass responds with HTTP `429` and the [`rate_limited` message](/configuration/config/messages.mdx).
+
+| Parameter            | Type    | Default Value | Description                                                                                                                        |
+| :------------------- | :------ | :------------ | :--------------------------------------------------------------------------------------------------------------------------------- |
+| `rate_limit.enable`  | Boolean | True          | Enable or disable rate limiting.                                                                                                   |
+| `rate_limit.queries` | Number  | 60            | Maximum number of queries a single client may submit per `period`. When querying multiple locations at once, each location counts as one query. |
+| `rate_limit.period`  | String  | minute        | Time period over which `queries` is counted. Must be one of `second`, `minute`, `hour`, or `day`.                                  |
+
+### Example with Defaults
+
+```yaml filename="config.yaml"
+rate_limit:
+    enable: true
+    queries: 60
+    period: minute
+```
+
+### Reverse Proxies
+
+Clients are identified by IP address. If hyperglass runs behind a reverse proxy, such as NGINX or Caddy, the proxy must be trusted so hyperglass uses the client address from the proxy's `X-Forwarded-For` header. Otherwise, every client appears to have the proxy's address and shares a single limit.
+
+By default, proxies on the same host (`127.0.0.1` and `::1`) are trusted. If your proxy runs elsewhere, for example in a separate container, set the [`HYPERGLASS_TRUSTED_PROXIES`](/installation/environment-variables.mdx) environment variable to its address. Only trust addresses you control, since a trusted address can claim to be any client.

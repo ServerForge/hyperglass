@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- Query rate limiting, enabled by default at 60 queries per minute per client. Configure it with the new `rate_limit` section; see the Rate Limiting docs.
+- `HYPERGLASS_TRUSTED_PROXIES` environment variable, for reverse proxies trusted to set the client address via `X-Forwarded-For`. Defaults to `127.0.0.1,::1`.
 - [#304](https://github.com/thatmattlove/hyperglass/pull/304): Add FRR structured output for BGP Routes - @chriswiggins
 
 ## 2.0.4 - 2024-06-30
