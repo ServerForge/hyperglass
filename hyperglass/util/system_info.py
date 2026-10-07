@@ -1,9 +1,12 @@
 """Utility functions for gathering system information."""
 
 # Standard Library
+import os
 import sys
+import math
 import typing as t
 import platform
+from pathlib import Path
 
 # Third Party
 import psutil as _psutil
@@ -57,6 +60,24 @@ def get_node_version() -> t.Tuple[int, int, int]:
     version = raw_version.replace("v", "")
     # Parse the version parts.
     return tuple((int(v) for v in version.split(".")))
+
+
+def available_cpus() -> int:
+    """Get the number of CPUs available to this process.
+
+    Unlike `os.cpu_count()`, this respects CPU affinity & container (cgroup v2) CPU limits.
+    """
+    try:
+        count = len(os.sched_getaffinity(0))
+    except AttributeError:
+        count = os.cpu_count() or 1
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            count = min(count, max(1, math.ceil(int(quota) / int(period))))
+    except (OSError, ValueError):
+        pass
+    return count
 
 
 def cpu_count(multiplier: int = 0) -> int:

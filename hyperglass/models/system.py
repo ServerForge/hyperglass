@@ -7,6 +7,7 @@ from ipaddress import ip_address
 
 # Third Party
 from pydantic import (
+    Field,
     FilePath,
     RedisDsn,
     SecretStr,
@@ -18,7 +19,7 @@ from pydantic import (
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Project
-from hyperglass.util import at_least, cpu_count
+from hyperglass.util import at_least, cpu_count, available_cpus
 
 if t.TYPE_CHECKING:
     # Third Party
@@ -27,6 +28,8 @@ if t.TYPE_CHECKING:
 ListenHost = t.Union[None, IPvAnyAddress, t.Literal["localhost"]]
 
 _default_app_path = Path("/etc/hyperglass")
+# Default maximum number of web server workers, if `HYPERGLASS_WORKERS` isn't set.
+MAX_DEFAULT_WORKERS = 4
 
 
 class HyperglassSettings(BaseSettings):
@@ -53,6 +56,7 @@ class HyperglassSettings(BaseSettings):
     # Reverse proxies trusted to set the client address via X-Forwarded-For (comma-separated IPs
     # or networks, or `*`), used for logging & rate limiting.
     trusted_proxies: str = "127.0.0.1,::1"
+    workers: t.Optional[int] = Field(None, gt=0)
 
     def __init__(self, **kwargs) -> None:
         """Create hyperglass Settings instance."""
@@ -82,6 +86,7 @@ class HyperglassSettings(BaseSettings):
                 "host",
                 "port",
                 "trusted_proxies",
+                "workers",
             )
         )
         for attr in params:
@@ -139,12 +144,17 @@ class HyperglassSettings(BaseSettings):
             return "DEBUG"
         return "WARNING"
 
-    @property
-    def workers(self: "HyperglassSettings") -> int:
-        """Get worker count, inferred from debug mode."""
+    def worker_count(self: "HyperglassSettings") -> int:
+        """Get the number of web server workers.
+
+        hyperglass is I/O bound (waiting on devices), so a few workers handle many concurrent
+        queries; additional workers mostly consume memory.
+        """
+        if self.workers is not None:
+            return self.workers
         if self.debug:
             return 1
-        return cpu_count(2)
+        return min(available_cpus(), MAX_DEFAULT_WORKERS)
 
     @property
     def redis(self: "HyperglassSettings") -> t.Dict[str, t.Union[None, int, str]]:

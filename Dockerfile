@@ -8,17 +8,23 @@ ENV HYPERGLASS_DEV_MODE=false
 ENV HYPERGLASS_REDIS_HOST=redis
 ENV HYPEGLASS_DISABLE_UI=true
 ENV HYPERGLASS_CONTAINER=true
+RUN apk add --no-cache build-base nodejs npm && npm install -g pnpm@9
+
+# Dependencies are installed before copying the source, so they're cached until a lockfile changes.
+FROM base AS dependencies
+COPY requirements.lock ./
+RUN grep -v '^-e' requirements.lock > /tmp/requirements.txt \
+    && pip3 install --no-cache-dir -r /tmp/requirements.txt
+COPY hyperglass/ui/package.json hyperglass/ui/pnpm-lock.yaml hyperglass/ui/pnpm-workspace.yaml hyperglass/ui/
+RUN cd hyperglass/ui && pnpm install --frozen-lockfile
+
+FROM dependencies AS hyperglass
 COPY . .
-
-FROM base AS ui
-WORKDIR /opt/hyperglass/hyperglass/ui
-RUN apk add build-base nodejs npm
-RUN npm install -g pnpm
-RUN pnpm install -P
-
-FROM ui AS hyperglass
-WORKDIR /opt/hyperglass
-RUN pip3 install -e .
+# The UI is built into the image, without configuration. At startup, hyperglass only renders the
+# configuration into the existing build, so configuration changes don't require a new UI build.
+RUN pip3 install --no-cache-dir --no-deps -e . \
+    && mkdir -p "$HYPERGLASS_APP_PATH" \
+    && python3 -m hyperglass.console build-ui
 
 EXPOSE ${HYPERGLASS_PORT}
 CMD ["python3", "-m", "hyperglass.console", "start"]

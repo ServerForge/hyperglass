@@ -11,36 +11,19 @@ import typer
 from .echo import echo
 
 
-def build_ui(timeout: int) -> None:
-    """Create a new UI build."""
+def build_ui(timeout: int) -> bool:
+    """Create a new UI build.
+
+    The UI is built without configuration, so this doesn't require configuration or Redis.
+    Configuration is rendered into the UI when hyperglass starts.
+    """
     # Project
-    from hyperglass.state import use_state
-    from hyperglass.frontend import build_frontend
-    from hyperglass.configuration import init_user_config
-
-    # Populate configuration to Redis prior to accessing it.
-    init_user_config()
-
-    state = use_state()
-
-    dev_mode = "production"
-    if state.settings.dev_mode:
-        dev_mode = "development"
+    from hyperglass.frontend import build_ui as _build_ui
 
     try:
-        build_success = asyncio.run(
-            build_frontend(
-                app_path=state.settings.app_path,
-                dev_mode=state.settings.dev_mode,
-                dev_url=f"http://localhost:{state.settings.port!s}/",
-                force=True,
-                params=state.ui_params,
-                prod_url="/api/",
-                timeout=timeout,
-            )
-        )
-        if build_success:
-            echo.success("Completed UI build in {} mode", dev_mode)
+        asyncio.run(_build_ui(timeout=timeout, force=True))
+        echo.success("Completed UI build")
+        return True
 
     except Exception as e:
         if not sys.stdout.isatty():

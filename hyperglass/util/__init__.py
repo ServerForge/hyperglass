@@ -18,7 +18,13 @@ from .tools import (
 )
 from .typing import is_type, is_series
 from .validation import get_driver, resolve_hostname, validate_platform
-from .system_info import cpu_count, check_python, get_system_info, get_node_version
+from .system_info import (
+    cpu_count,
+    check_python,
+    available_cpus,
+    get_system_info,
+    get_node_version,
+)
 
 __all__ = (
     "at_least",
@@ -29,6 +35,7 @@ __all__ = (
     "compare_lists",
     "copyfiles",
     "cpu_count",
+    "available_cpus",
     "deep_convert_keys",
     "dict_to_kwargs",
     "dotenv_to_dict",

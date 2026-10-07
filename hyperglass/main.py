@@ -28,7 +28,6 @@ if node_major < MIN_NODE_VERSION:
 
 
 # Local
-from .util import cpu_count
 from .state import use_state
 from .settings import Settings
 
@@ -38,7 +37,7 @@ log = init_logger(LOG_LEVEL)
 
 
 async def build_ui() -> bool:
-    """Perform a UI build prior to starting the application."""
+    """Prepare the UI with the current configuration prior to starting the application."""
     # Local
     from .frontend import build_frontend
 
@@ -46,7 +45,6 @@ async def build_ui() -> bool:
     await build_frontend(
         dev_mode=Settings.dev_mode,
         dev_url=Settings.dev_url,
-        prod_url=Settings.prod_url,
         params=state.ui_params,
         app_path=Settings.app_path,
     )
@@ -152,13 +150,7 @@ def run(workers: int = None):
                 host=state.params.logging.syslog.host,
                 port=state.params.logging.syslog.port,
             )
-        _workers = workers
-
-        if workers is None:
-            if Settings.debug:
-                _workers = 1
-            else:
-                _workers = cpu_count(2)
+        _workers = workers or Settings.worker_count()
 
         log.bind(
             version=__version__,

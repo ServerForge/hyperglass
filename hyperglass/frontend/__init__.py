@@ -2,20 +2,43 @@
 
 # Standard Library
 import os
-import json
 import math
 import shutil
 import typing as t
 import asyncio
+import hashlib
 from pathlib import Path
 
 # Project
 from hyperglass.log import log
-from hyperglass.util import copyfiles, check_path, move_files, dotenv_to_dict
+from hyperglass.util import copyfiles, check_path
+
+# Local
+from .render import BUILD_ID_FILE, render_ui
+from .favicons import generate_favicons
 
 if t.TYPE_CHECKING:
     # Project
     from hyperglass.models.ui import UIParameters
+
+UI_DIR = Path(__file__).parent.parent / "ui"
+UI_BUILD_DIR = UI_DIR / "out"
+# Files & directories that determine the UI build's output.
+UI_SOURCES = (
+    "components",
+    "context",
+    "elements",
+    "hooks",
+    "pages",
+    "public",
+    "types",
+    "util",
+    "favicon-formats.ts",
+    "next.config.js",
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.json",
+)
 
 
 def get_ui_build_timeout() -> t.Optional[int]:
@@ -29,112 +52,74 @@ def get_ui_build_timeout() -> t.Optional[int]:
     return timeout
 
 
-async def check_node_modules() -> bool:
-    """Check if node_modules exists and has contents."""
-
-    ui_path = Path(__file__).parent.parent / "ui"
-    node_modules = ui_path / "node_modules"
-
-    exists = node_modules.exists()
-    valid = exists
-
-    if exists and not tuple(node_modules.iterdir()):
-        valid = False
-
-    return valid
+def ui_source_hash() -> str:
+    """Create a hash of the UI source, used to determine if a new UI build is required."""
+    digest = hashlib.sha256()
+    for source in UI_SOURCES:
+        path = UI_DIR / source
+        files = sorted(p for p in path.rglob("*") if p.is_file()) if path.is_dir() else (path,)
+        for file in files:
+            digest.update(file.relative_to(UI_DIR).as_posix().encode())
+            digest.update(file.read_bytes())
+    return digest.hexdigest()
 
 
-async def read_package_json() -> t.Dict[str, t.Any]:
-    """Import package.json as a python dict."""
-
-    package_json_file = Path(__file__).parent.parent / "ui" / "package.json"
-
-    try:
-        with package_json_file.open("r") as file:
-            package_json = json.load(file)
-
-    except Exception as err:
-        raise RuntimeError(f"Error reading package.json: {str(err)}") from err
-
-    return package_json
+def ui_build_current() -> bool:
+    """Determine if the existing UI build was built from the current UI source."""
+    build_id = UI_BUILD_DIR / BUILD_ID_FILE
+    return build_id.exists() and build_id.read_text().strip() == ui_source_hash()
 
 
-async def node_initial(timeout: int = 180, dev_mode: bool = False) -> str:
-    """Initialize node_modules."""
-
-    ui_path = Path(__file__).parent.parent / "ui"
-
+async def run_ui_command(command: str, timeout: int, **env: str) -> str:
+    """Run a command in the UI directory, raising an error if it fails or times out."""
     env_timeout = get_ui_build_timeout()
-
     if env_timeout is not None and env_timeout > timeout:
         timeout = env_timeout
 
     proc = await asyncio.create_subprocess_shell(
-        cmd="pnpm install",
+        cmd=command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=ui_path,
+        cwd=UI_DIR,
+        env={**os.environ, **env},
     )
-
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    messages = stdout.decode("utf-8").strip()
-    errors = stderr.decode("utf-8").strip()
-
-    if proc.returncode != 0:
-        raise RuntimeError(f"\nMessages:\n{messages}\nErrors:\n{errors}")
-
-    await proc.wait()
-
-    return "\n".join(messages)
-
-
-async def build_ui(app_path: Path):
-    """Execute `next build` & `next export` from UI directory.
-
-    ### Raises
-        RuntimeError: Raised if exit code is not 0.
-        RuntimeError: Raised when any other error occurs.
-    """
-    timeout = get_ui_build_timeout()
-
-    ui_dir = Path(__file__).parent.parent / "ui"
-    build_dir = app_path / "static" / "ui"
-    out_dir = ui_dir / "out"
-
-    build_command = "node_modules/.bin/next build"
-
-    all_messages = []
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd=build_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=ui_dir,
-        )
-
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        messages = stdout.decode("utf-8").strip()
-        errors = stderr.decode("utf-8").strip()
-
-        if proc.returncode != 0:
-            raise RuntimeError(f"\nMessages:\n{messages}\nErrors:\n{errors}")
-
-        await proc.wait()
-        all_messages.append(messages)
-
     except asyncio.TimeoutError as err:
-        raise RuntimeError(f"{timeout} second timeout exceeded while building UI") from err
+        proc.kill()
+        raise RuntimeError(f"{timeout} second timeout exceeded running '{command}'") from err
 
-    except Exception as err:
-        log.error(err)
-        raise RuntimeError(str(err)) from err
+    messages = stdout.decode("utf-8").strip()
+    if proc.returncode != 0:
+        errors = stderr.decode("utf-8").strip()
+        raise RuntimeError(f"'{command}' failed\nMessages:\n{messages}\nErrors:\n{errors}")
+    return messages
 
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-    shutil.copytree(src=out_dir, dst=build_dir, dirs_exist_ok=False)
-    log.bind(src=out_dir, dst=build_dir).debug("Migrated Next.JS build output")
 
-    return "\n".join(all_messages)
+async def build_ui(timeout: int = 180, force: bool = False) -> bool:
+    """Build the UI if its source has changed since the last build.
+
+    The UI is built without configuration, so configuration changes never require a new build.
+
+    Returns:
+        `True` if a new UI build was created.
+    """
+    if not force and ui_build_current():
+        log.debug("UI build is current, skipping UI build")
+        return False
+
+    log.info("Starting UI build")
+    build_id = ui_source_hash()
+
+    # Configuration written in development mode must not be included in a UI build.
+    (UI_DIR / "hyperglass.json").unlink(missing_ok=True)
+
+    await run_ui_command("pnpm install --frozen-lockfile", timeout)
+    log.debug(await run_ui_command("node_modules/.bin/next build", timeout, NODE_ENV="production"))
+
+    (UI_BUILD_DIR / BUILD_ID_FILE).write_text(build_id)
+    log.info("Completed UI build")
+    return True
 
 
 def generate_opengraph(
@@ -211,25 +196,6 @@ def migrate_images(app_path: Path, params: "UIParameters"):
     return copyfiles(src_files, dst_files)
 
 
-def write_favicon_formats(formats: t.Tuple[t.Dict[str, t.Any]]) -> None:
-    """Create a TypeScript file in the `ui` directory containing favicon formats.
-
-    This file should stay the same, unless `hyperglass.frontend.favicons.FAVICONS` changes.
-    """
-    # Standard Library
-    from collections import OrderedDict
-
-    file = Path(__file__).parent.parent / "ui" / "favicon-formats.ts"
-
-    # Sort each favicon definition to ensure the result stays the same
-    # time the UI build runs.
-    ordered = json.dumps([OrderedDict(sorted(fmt.items())) for fmt in formats])
-    data = "import type {{ Favicon }} from '~/types';export default {} as Favicon[];".format(
-        ordered
-    )
-    file.write_text(data)
-
-
 def write_custom_files(params: "UIParameters") -> None:
     """Write custom files to the `ui` directory so they can be imported and rendered."""
     js = Path(__file__).parent.parent / "ui" / "custom.js"
@@ -249,114 +215,26 @@ def write_custom_files(params: "UIParameters") -> None:
             f.write("")
 
 
-async def build_frontend(  # noqa: C901
+async def build_frontend(
     dev_mode: bool,
     dev_url: str,
-    prod_url: str,
     params: "UIParameters",
     app_path: Path,
     force: bool = False,
     timeout: int = 180,
-    full: bool = False,
 ) -> bool:
-    """Perform full frontend UI build process."""
-    # Standard Library
-    import hashlib
+    """Prepare the UI to be served with the current configuration.
 
-    # Project
-    from hyperglass.constants import __version__
-
-    # Local
-    from .favicons import generate_favicons
-
-    # Create temporary file. json file extension is added for easy
-    # webpack JSON parsing.
-    dot_env_file = Path(__file__).parent.parent / "ui" / ".env"
-    env_config = {}
-
-    ui_config_file = Path(__file__).parent.parent / "ui" / "hyperglass.json"
-
-    ui_config_file.write_text(params.export_json(by_alias=True))
-
-    package_json = await read_package_json()
-
-    # Set NextJS production/development mode and base URL based on
-    # developer_mode setting.
-    if dev_mode:
-        env_config.update({"HYPERGLASS_URL": dev_url, "NODE_ENV": "development"})
-
-    else:
-        env_config.update({"HYPERGLASS_URL": prod_url, "NODE_ENV": "production"})
-
-    # Check if hyperglass/ui/node_modules has been initialized. If not,
-    # initialize it.
-    initialized = await check_node_modules()
-
-    if initialized:
-        log.debug("node_modules is already initialized")
-
-    elif not initialized:
-        log.debug("node_modules has not been initialized. Starting initialization...")
-
-        node_setup = await node_initial(timeout, dev_mode)
-
-        if node_setup == "":
-            log.debug("Re-initialized node_modules")
-
+    In production, the UI is only built if its source has changed (e.g. after an upgrade), and
+    configuration is rendered into the existing build. In development mode, configuration is
+    written to the UI directory for the Next.js development server.
+    """
     images_dir = app_path / "static" / "images"
-    favicon_dir = images_dir / "favicons"
-    favicons = await asyncio.to_thread(generate_favicons, params.web.logo.favicon, favicon_dir)
+    favicons = await asyncio.to_thread(
+        generate_favicons, params.web.logo.favicon, images_dir / "favicons"
+    )
     log.bind(count=len(favicons)).debug("Generated favicons")
-    write_favicon_formats(favicons)
-
-    build_data = {
-        "params": params.export_dict(),
-        "version": __version__,
-        "package_json": package_json,
-    }
-
-    build_json = json.dumps(build_data, default=str)
-
-    # Create SHA256 hash from all parameters passed to UI, use as
-    # build identifier.
-    build_id = hashlib.sha256(build_json.encode()).hexdigest()
-
-    # Read hard-coded environment file from last build. If build ID
-    # matches this build's ID, don't run a new build.
-    if dot_env_file.exists() and not force:
-        env_data = dotenv_to_dict(dot_env_file)
-        env_build_id = env_data.get("HYPERGLASS_BUILD_ID", "None")
-        log.bind(id=env_build_id).debug("Previous build detected")
-
-        if env_build_id == build_id:
-            log.debug("UI parameters unchanged since last build, skipping UI build...")
-            return True
-
-    env_config.update({"HYPERGLASS_BUILD_ID": build_id})
-
-    dot_env_file.write_text("\n".join(f"{k}={v}" for k, v in env_config.items()))
-    log.bind(path=str(dot_env_file)).debug("Wrote UI environment file")
-
-    # Initiate Next.JS export process.
-    if any((not dev_mode, force, full)):
-        log.info("Starting UI build")
-        initialize_result = await node_initial(timeout, dev_mode)
-        build_result = await build_ui(app_path=app_path)
-
-        if initialize_result:
-            log.debug(initialize_result)
-        elif initialize_result == "":
-            log.debug("Re-initialized node_modules")
-
-        if build_result:
-            log.info("Completed UI build")
-    elif dev_mode and not force:
-        log.debug("Running in developer mode, did not build new UI files")
-
     migrate_images(app_path, params)
-
-    write_custom_files(params)
-
     generate_opengraph(
         params.web.opengraph.image,
         1200,
@@ -365,4 +243,16 @@ async def build_frontend(  # noqa: C901
         params.web.theme.colors.black,
     )
 
+    if dev_mode:
+        (UI_DIR / "hyperglass.json").write_text(params.export_json(by_alias=True))
+        write_custom_files(params)
+        (UI_DIR / ".env").write_text(f"HYPERGLASS_URL={dev_url}\nNODE_ENV=development")
+        if not (UI_DIR / "node_modules").exists():
+            await run_ui_command("pnpm install --frozen-lockfile", timeout)
+        log.debug("Running in developer mode, wrote UI configuration")
+        return True
+
+    await build_ui(timeout=timeout, force=force)
+    await asyncio.to_thread(render_ui, UI_BUILD_DIR, app_path / "static" / "ui", params)
+    log.debug("Rendered UI configuration")
     return True

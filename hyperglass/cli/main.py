@@ -77,7 +77,7 @@ def _build_ui(timeout: int = typer.Option(180, help="Timeout in seconds")) -> No
     with echo._console.status(
         f"Starting new UI build with a {timeout} second timeout...", spinner="aesthetic"
     ):
-        _build_ui(timeout=120)
+        _build_ui(timeout=timeout)
 
 
 @cli.command(name="system-info")

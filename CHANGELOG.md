@@ -11,7 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Behavior change:** regex `condition` patterns on directive rules now must match the entire query target (`re.fullmatch`) instead of only its beginning.
 - Upgraded dependencies with known vulnerabilities (Litestar, paramiko, cryptography, Jinja2, h11, idna, Next.js and others). Removed the unused `PyJWT`, `distro` and `aiofiles` dependencies, plus unused frontend ESLint/Prettier tooling.
 
+### Changed
+- **Faster startup:** the UI is no longer rebuilt when configuration changes. It's built without configuration, and hyperglass renders the configuration into it at startup, which takes about a second rather than a full UI build (40+ seconds, longer on smaller servers). A new UI build only happens when the UI itself changes, such as after an upgrade. Docker images now include a pre-built UI, so containers start without building the UI, even after an image update.
+- `hyperglass build-ui` no longer requires configuration or Redis.
+- The default number of web server workers is now the number of CPUs available to hyperglass (respecting container CPU limits), up to 4. Previously it was twice the host's CPU count, e.g. 64 workers using ~6 GB of memory on a 32-thread host.
+- Docker images cache Python & UI dependencies, so rebuilding an image after a code change doesn't reinstall them.
+
 ### Fixed
+- `hyperglass start --build` built the UI, but never started hyperglass.
+- `hyperglass build-ui --timeout` was ignored.
 - Device commands no longer block the event loop; one slow device previously stalled every request in the worker.
 - Replaced the process-wide `SIGALRM` request timeout, which stayed armed after failed queries and could raise timeouts in unrelated requests.
 - SSH sessions are now closed when a command fails.
@@ -34,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- `HYPERGLASS_WORKERS` environment variable, to set the number of web server workers.
 - Query rate limiting, enabled by default at 60 queries per minute per client. Configure it with the new `rate_limit` section; see the Rate Limiting docs.
 - `HYPERGLASS_TRUSTED_PROXIES` environment variable, for reverse proxies trusted to set the client address via `X-Forwarded-For`. Defaults to `127.0.0.1,::1`.
 - [#304](https://github.com/thatmattlove/hyperglass/pull/304): Add FRR structured output for BGP Routes - @chriswiggins

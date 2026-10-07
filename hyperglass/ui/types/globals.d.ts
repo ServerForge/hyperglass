@@ -63,11 +63,6 @@ export declare global {
   }
 }
 
-declare module 'hyperglass.json' {
-  type Config = import('./config').Config;
-  export default Config;
-}
-
 declare module 'react' {
   // Enable generic typing with forwardRef.
   // eslint-disable-next-line @typescript-eslint/ban-types
