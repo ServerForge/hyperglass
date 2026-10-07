@@ -6,12 +6,8 @@ authors = [
     { name = "thatmattlove", email = "matt@hyperglass.dev" }
 ]
 dependencies = [
-    "Pillow>=10.4.0",
+    "Pillow>=12.3.0",
     "PyYAML>=6.0.2",
-    "favicons>=0.2.2",
-    # favicons (unmaintained) caps typer<0.10, Pillow<11 & rich<14; typer 0.9 is incompatible with
-    # click>=8.2. Remove these caps when favicons is replaced.
-    "click>=8.1.8,<8.2",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "netmiko>=4.6.0",
@@ -20,8 +16,9 @@ dependencies = [
     "py-cpuinfo>=9.0.0",
     "pydantic>=2.11.0",
     "redis>=5.2.1",
-    "rich>=13.7.0",
-    "typer>=0.9.0",
+    "resvg-py>=0.5.0",
+    "rich>=14.0.0",
+    "typer>=0.16.0",
     "uvicorn>=0.35.0",
     "uvloop>=0.21.0",
     "xmltodict>=0.14.2",

@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Device commands no longer block the event loop; one slow device previously stalled every request in the worker.
 - Replaced the process-wide `SIGALRM` request timeout, which stayed armed after failed queries and could raise timeouts in unrelated requests.
 - SSH sessions are now closed when a command fails.
+- Replaced the unmaintained `favicons` library with a built-in generator. This removes the system cairo dependency and unblocks Pillow, typer and rich upgrades. SVG favicons are now rendered more accurately.
+- The `favicon.ico` `<link/>` tag pointed to a nonexistent `favicon-64x64.ico` file.
+- `hyperglass system-info` failed with `KeyError: 'hyperglass_directory'`.
 - Removed DSA key support from SSH proxy tunnels; DSA keys are no longer supported by paramiko 4+.
 - [#280](https://github.com/thatmattlove/hyperglass/issues/280): Fix: `condition: None` caused error in directive @Jimmy01240397
 - [#306](https://github.com/thatmattlove/hyperglass/issues/306): Fix: allow integer values in ext_community_list_raw field for Arista BGP - @cooperwinser
