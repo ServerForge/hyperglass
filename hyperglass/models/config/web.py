@@ -1,6 +1,7 @@
 """Validate branding configuration variables."""
 
 # Standard Library
+import re
 import typing as t
 from pathlib import Path
 
@@ -18,9 +19,7 @@ from .opengraph import OpenGraph
 
 DEFAULT_IMAGES = Path(__file__).parent.parent.parent / "images"
 DOH_PROVIDERS_PATTERN = "|".join(DNS_OVER_HTTPS.keys())
-PERCENTAGE_PATTERN = r"^([1-9][0-9]?|100)\%?$"
 
-Percentage = Field(pattern=r"^([1-9][0-9]?|100)\%$")
 TitleMode = t.Literal["logo_only", "text_only", "logo_subtitle", "all"]
 ColorMode = t.Literal["light", "dark"]
 Side = t.Literal["left", "right"]
@@ -86,8 +85,29 @@ class Logo(HyperglassModel):
     light: FilePath = DEFAULT_IMAGES / "hyperglass-light.svg"
     dark: FilePath = DEFAULT_IMAGES / "hyperglass-dark.svg"
     favicon: FilePath = DEFAULT_IMAGES / "hyperglass-icon.svg"
-    width: str = Field(default="50%", pattern=PERCENTAGE_PATTERN)
-    height: t.Optional[str] = Field(default=None, pattern=PERCENTAGE_PATTERN)
+    width: str = "50%"
+    height: t.Optional[str] = None
+
+    @field_validator("width", "height", mode="before")
+    def validate_size(cls, value: t.Any) -> t.Optional[str]:
+        """Convert a size to a CSS value: a percentage (e.g. `50%`), or pixels (e.g. `200px`).
+
+        Numbers without a unit are pixels.
+        """
+        if value is None:
+            return value
+        match = None
+        if isinstance(value, int) and not isinstance(value, bool):
+            match = re.fullmatch(r"(\d+)()", str(value))
+        elif isinstance(value, str):
+            match = re.fullmatch(r"\s*(\d+)\s*(%|px)?\s*", value, re.IGNORECASE)
+        if match is not None:
+            number, unit = int(match.group(1)), (match.group(2) or "px").lower()
+            if 0 < number and (unit == "px" or number <= 100):
+                return f"{number}{unit}"
+        raise ValueError(
+            "Invalid size. Use a percentage from 1% to 100%, or a number of pixels, e.g. 200 or 200px"
+        )
 
 
 class LogoPublic(Logo):
@@ -157,8 +177,10 @@ class ThemeColors(HyperglassModel):
     def validate_colors(cls: "ThemeColors", value: str, info: ValidationInfo) -> str:
         """Set default functional color mapping."""
         if value is None:
-            default_color = FUNC_COLOR_MAP[info.field_name]
-            value = str(info.data[default_color])
+            # The default color is missing if it's invalid, which is reported as its own error.
+            default_color = info.data.get(FUNC_COLOR_MAP[info.field_name])
+            if default_color is not None:
+                value = str(default_color)
         return value
 
     def dict(self, *args: t.Any, **kwargs: t.Any) -> t.Dict[str, str]:
@@ -188,19 +210,34 @@ class DnsOverHttps(HyperglassModel):
     url: str = ""
 
     @model_validator(mode="before")
-    def validate_dns(cls, data: "DnsOverHttps") -> t.Dict[str, str]:
+    def validate_dns(cls, data: t.Any) -> t.Any:
         """Assign url field to model based on selected provider."""
+        if isinstance(data, DnsOverHttps):
+            return data
+        providers = ", ".join(DNS_OVER_HTTPS.keys())
+        if not isinstance(data, t.Dict):
+            raise ValueError(
+                f"Expected a mapping with a provider 'name' ({providers}) or a custom 'url', "
+                f"got '{type(data).__name__}'"
+            )
         name = data.get("name", "cloudflare")
-        url = data.get("url", DNS_OVER_HTTPS["cloudflare"])
-        if url not in DNS_OVER_HTTPS.values():
+        url = data.get("url")
+        if url is not None and url not in DNS_OVER_HTTPS.values():
             return {
                 "name": "custom",
                 "url": url,
             }
-        url = DNS_OVER_HTTPS[name]
+        if name not in DNS_OVER_HTTPS:
+            if url is None:
+                raise ValueError(
+                    f"{name!r} is not a built-in DNS over HTTPS provider ({providers}). "
+                    "Provide a 'url' to use a custom provider."
+                )
+            # A built-in provider's URL with an unknown name.
+            name = next(k for k, v in DNS_OVER_HTTPS.items() if v == url)
         return {
             "name": name,
-            "url": url,
+            "url": DNS_OVER_HTTPS[name],
         }
 
 

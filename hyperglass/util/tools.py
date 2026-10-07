@@ -1,6 +1,7 @@
 """Collection of generalized functional tools."""
 
 # Standard Library
+import re
 import typing as t
 
 # Project
@@ -10,7 +11,10 @@ DeepConvert = t.TypeVar("DeepConvert", bound=t.Dict[str, t.Any])
 
 
 def run_coroutine_in_new_thread(coroutine: t.Coroutine) -> t.Any:
-    """Run an async function in a separate thread and get the result."""
+    """Run an async function in a separate thread and get the result.
+
+    Exceptions raised by the async function are raised in the calling thread.
+    """
     # Standard Library
     import asyncio
     import threading
@@ -18,16 +22,34 @@ def run_coroutine_in_new_thread(coroutine: t.Coroutine) -> t.Any:
     class Resolver(threading.Thread):
         def __init__(self, coro: t.Coroutine) -> None:
             self.result: t.Any = None
+            self.error: t.Optional[BaseException] = None
             self.coro: t.Coroutine = coro
             super().__init__()
 
         def run(self):
-            self.result = asyncio.run(self.coro())
+            try:
+                self.result = asyncio.run(self.coro())
+            except BaseException as err:
+                self.error = err
 
     thread = Resolver(coroutine)
     thread.start()
     thread.join()
+    if thread.error is not None:
+        raise thread.error
     return thread.result
+
+
+def replace_placeholders(template: str, **values: t.Any) -> str:
+    """Replace `{name}` placeholders, only for the names provided.
+
+    Unlike `str.format()`, all other text, including braces (e.g. JSON or regular expressions in
+    user-provided text), is left as-is.
+    """
+    if not values:
+        return template
+    pattern = re.compile(r"\{(" + "|".join(re.escape(key) for key in values) + r")\}")
+    return pattern.sub(lambda match: str(values[match.group(1)]), template)
 
 
 def split_on_uppercase(s: str) -> t.List[str]:

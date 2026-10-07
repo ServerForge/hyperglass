@@ -41,6 +41,11 @@ def test_dotenv_to_dict_file(tmp_path_factory: pytest.TempPathFactory):
     assert result.get("KEY3") == "VALUE3"
 
 
+def test_dotenv_to_dict_values():
+    result = dotenv_to_dict("# A comment\n\nKEY1=dmFsdWU=\nKEY2 = a=b \nKEY3=\n")
+    assert result == {"KEY1": "dmFsdWU=", "KEY2": "a=b", "KEY3": ""}
+
+
 def test_dotenv_to_dict_raises_type_error():
     with pytest.raises(TypeError):
         dotenv_to_dict(True)
@@ -75,9 +80,9 @@ def test_check_path_dir(tmp_path_factory: pytest.TempPathFactory):
 
 def test_check_path_create_file(tmp_path_factory: pytest.TempPathFactory):
     dir_ = tmp_path_factory.mktemp("test")
-    file_ = dir_ / "file.txt"
+    file_ = dir_ / "parent" / "file.txt"
     result = check_path(file_, create=True)
-    assert file_.exists()
+    assert file_.is_file()
     assert result == file_
 
 

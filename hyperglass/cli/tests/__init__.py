@@ -1,0 +1,1 @@
+"""hyperglass CLI tests."""

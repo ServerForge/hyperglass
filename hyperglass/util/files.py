@@ -132,7 +132,11 @@ def copyfiles(src_files: t.Iterable[Path], dst_files: t.Iterable[Path]):
 def check_path(
     path: t.Union[Path, str], *, mode: str = "r", create: bool = False
 ) -> t.Optional[Path]:
-    """Verify if a path exists and is accessible."""
+    """Verify if a path exists and is accessible.
+
+    If `create` is `True`, a missing path is created: as an empty file if it has a file extension,
+    or as a directory if it doesn't.
+    """
 
     result = None
 
@@ -141,8 +145,9 @@ def check_path(
 
     if not path.exists():
         if create:
-            if path.is_file():
-                path.parent.mkdir(parents=True)
+            if path.suffix:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
             else:
                 path.mkdir(parents=True)
         else:
@@ -172,14 +177,16 @@ def dotenv_to_dict(dotenv: t.Union[Path, str]) -> t.Dict[str, str]:
     else:
         data = dotenv
 
-    for line in (line for line in (line.strip() for line in data.splitlines()) if line):
-        parts = line.split("=")
-        if len(parts) != 2:
+    for line in (line.strip() for line in data.splitlines()):
+        if not line or line.startswith("#"):
+            continue
+        # Split on the first `=` only, values may contain `=` (e.g. base64).
+        key, separator, value = line.partition("=")
+        if not separator or not key.strip():
             raise TypeError(
                 f"Line {line!r} is improperly formatted. "
                 "Expected a key/value pair such as 'key=value'"
             )
-        key, value = line.split("=")
         result[key.strip()] = value.strip()
 
     return result

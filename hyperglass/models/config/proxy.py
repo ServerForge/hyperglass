@@ -9,7 +9,7 @@ from pydantic import ValidationInfo, field_validator
 
 # Project
 from hyperglass.util import resolve_hostname
-from hyperglass.exceptions.private import ConfigError, UnsupportedDevice
+from hyperglass.exceptions.private import ConfigError
 
 # Local
 from ..main import HyperglassModel
@@ -51,9 +51,9 @@ class Proxy(HyperglassModel):
         """Validate device type."""
 
         if value != "linux_ssh":
-            raise UnsupportedDevice(
-                "Proxy '{}' uses platform '{}', which is currently unsupported.",
-                info.data.get("address"),
-                value,
+            raise ConfigError(
+                "Proxy '{a}' uses platform '{p}', which is unsupported. Proxies must use 'linux_ssh'.",
+                a=info.data.get("address"),
+                p=value,
             )
         return value

@@ -75,3 +75,18 @@ def test_is_series():
     )
     for value, expected in checks:
         assert is_series(value) is expected
+
+
+def test_is_type_multiple():
+    checks = (
+        (_string, (dict, str), True),
+        (_string, (str, dict), True),
+        (_dict, (typing.List, typing.Dict), True),
+        (None, (str, None), True),
+        (_list, (None, str, typing.Dict), False),
+        (1, (str, int | None), True),
+        (None, (str, int | None), True),
+        (_class_instance, (str, typing.Optional[EmptyTestClass]), True),
+    )
+    for value, types, expected in checks:
+        assert is_type(value, *types) is expected, f"is_type({value!r}, {types})"

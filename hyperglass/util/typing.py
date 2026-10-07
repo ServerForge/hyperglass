@@ -1,8 +1,22 @@
 """Typing utilities."""
 
 # Standard Library
+import types as _types
 import typing
 import inspect
+
+
+def _matches_type(value: typing.Any, _type: typing.Any) -> bool:
+    if _type is None:
+        return value is None
+    if inspect.isclass(_type):
+        return isinstance(value, _type)
+    origin = typing.get_origin(_type)
+    if origin in (typing.Union, _types.UnionType):
+        return any(_matches_type(value, t) for t in typing.get_args(_type))
+    if origin is None:
+        return isinstance(value, type(_type))
+    return isinstance(value, origin)
 
 
 def is_type(value: typing.Any, *types: typing.Any) -> bool:
@@ -13,18 +27,7 @@ def is_type(value: typing.Any, *types: typing.Any) -> bool:
 
     Probably wrong, but seems to work for most cases.
     """
-    for _type in types:
-        if _type is None:
-            return value is None
-        if inspect.isclass(_type):
-            return isinstance(value, _type)
-        origin = typing.get_origin(_type)
-        if origin is typing.Union:
-            return any(is_type(value, t) for t in _type.__args__)
-        if origin is None:
-            return isinstance(value, type(_type))
-        return isinstance(value, origin)
-    return False
+    return any(_matches_type(value, _type) for _type in types)
 
 
 def is_series(value: typing.Any) -> bool:

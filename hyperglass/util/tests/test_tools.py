@@ -19,6 +19,7 @@ from ..tools import (
     repr_from_attrs,
     deep_convert_keys,
     split_on_uppercase,
+    replace_placeholders,
     run_coroutine_in_new_thread,
 )
 
@@ -175,6 +176,28 @@ def test_run_coroutine_in_new_thread():
     asyncio.run(sleeper())
     result = run_coroutine_in_new_thread(test)
     assert result is True
+
+
+def test_run_coroutine_in_new_thread_error():
+    async def test():
+        raise ConnectionError("unreachable")
+
+    with pytest.raises(ConnectionError, match="unreachable"):
+        run_coroutine_in_new_thread(test)
+
+
+def test_replace_placeholders():
+    checks = (
+        ("AS{primary_asn}", {"primary_asn": 65000}, "AS65000"),
+        ("{a} {a} {b}", {"a": 1, "b": "two"}, "1 1 two"),
+        # Other text, including unknown placeholders & unbalanced braces, is kept as-is.
+        ("{unknown} {} {0} {{a}} :-} {", {"a": 1}, "{unknown} {} {0} {1} :-} {"),
+        ('{"query_location": "{a}"}', {"a": "x"}, '{"query_location": "x"}'),
+        ("policy { term 1 { then accept; } }", {"a": 1}, "policy { term 1 { then accept; } }"),
+        ("{a}", {}, "{a}"),
+    )
+    for template, values, expected in checks:
+        assert replace_placeholders(template, **values) == expected
 
 
 def test_compare_lists():

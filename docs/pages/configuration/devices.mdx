@@ -9,6 +9,7 @@ Each configured device may have the following parameters:
 | Parameter           | Type            | Default Value | Description                                                                                                                                |
 | :------------------ | :-------------- | :------------ | :----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`              | String          |               | Display name of the device.                                                                                                                |
+| `id`                | String          |               | Unique identifier of the device, used by the API. Generated from `name` if not set, e.g. `Chicago, IL` becomes `chicago_il`.               |
 | `description`       | String          |               | Description of the device, displayed as a subtle label.                                                                                    |
 | `avatar`            | String          |               | Path to an avatar/logo image for this site. Used when [`web.location_display_mode`](/configuration/config/web-ui.mdx) is set to `gallery`. |
 | `address`           | String          |               | IPv4 address, IPv6 address, or hostname of the device.                                                                                     |

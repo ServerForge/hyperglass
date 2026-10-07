@@ -19,6 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `hyperglass build-ui` no longer requires configuration or Redis.
 - The default number of web server workers is now the number of CPUs available to hyperglass (respecting container CPU limits), up to 4. Previously it was twice the host's CPU count, e.g. 64 workers using ~6 GB of memory on a 32-thread host.
 - Docker images cache Python & UI dependencies, so rebuilding an image after a code change doesn't reinstall them.
+- **Behavior change:** device IDs now support non-ASCII names, and duplicate device IDs are a configuration error. Previously, non-ASCII characters were removed from IDs, so e.g. `東京` and `大阪` both had an empty ID, and queries could reach the wrong device. IDs of names containing non-ASCII characters change, e.g. `São Paulo` becomes `são_paulo` instead of `so_paulo`.
+- **Behavior change:** only documented placeholders (e.g. `{org_name}` in `site_description`) are replaced in configured text, and any other braces are shown as-is, instead of crashing startup. `{{` and `}}` are no longer escapes for braces.
 - **Behavior change (API):** validation errors return HTTP 400 instead of 200, unknown devices return 404 instead of 500, and `GET /api/queries` returns query type IDs (as accepted by `POST /api/query`) instead of names. A device's name is also accepted as `queryLocation`.
 - `hyperglass clear-cache` now only deletes cached responses & lookups, so it's safe to run while hyperglass is running; previously it deleted all hyperglass state, breaking a running instance until it was restarted. hyperglass also only deletes its own keys from Redis at startup, instead of the whole database.
 - Cached responses now expire `cache.timeout` seconds after the query ran. Previously each cache hit extended the expiration, so a frequently repeated query was never refreshed. `cache.timeout: 0` disables caching.
@@ -32,7 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - SSH sessions are now closed when a command fails.
 - Replaced the unmaintained `favicons` library with a built-in generator. This removes the system cairo dependency and unblocks Pillow, typer and rich upgrades. SVG favicons are now rendered more accurately.
 - The `favicon.ico` `<link/>` tag pointed to a nonexistent `favicon-64x64.ico` file.
-- `hyperglass system-info` failed with `KeyError: 'hyperglass_directory'`.
+- `hyperglass system-info` failed with `KeyError: 'hyperglass_directory'`, or when NodeJS wasn't installed.
 - Removed DSA key support from SSH proxy tunnels; DSA keys are no longer supported by paramiko 4+.
 - Web server workers didn't write to log files or syslog, and logged at the debug level.
 - A failed start (e.g. the port was in use) exited with status 0 and a "keyboard interrupt" message, so service managers didn't restart hyperglass.
@@ -42,6 +44,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Docker images included the local UI build output (several GB in a development checkout), Python caches and git history from the build context.
 - Console log messages containing braces were dropped.
 - Device connection errors (HTTP devices, SSH proxies) and errors containing braces (e.g. Junos `{master}`) caused a generic HTTP 500 error, and error messages could end with "(None)".
+- OpenGraph image generation crashed or deleted files (if the source image was named `opengraph.jpg`, was in `static/images`, or was named like a logo), failed for palette & 16-bit images, and turned transparent areas white. A device avatar in `static/images` crashed startup.
+- Errors in a Python configuration file's `main()` function were ignored, so hyperglass started with its default configuration.
+- Malformed configuration (e.g. invalid colors, empty or mapping-shaped `devices`, list-shaped directives, an empty `config.json`, a proxy with an unsupported platform) raised internal errors instead of validation errors with file & field context.
+- Directive commands using the documented `{mask}` placeholder failed validation.
+- `hyperglass setup` deleted logos & avatars in `static/images`, and hid UI build errors.
+- `hyperglass devices`, `directives` & `plugins` searches showed only the first match, or everything when nothing matched, and failed on patterns with braces; error messages containing `[` failed to print.
+- `task docs-platforms` always failed. CI could test a different Python version than intended, and didn't fail when hyperglass failed to start.
 - [#280](https://github.com/thatmattlove/hyperglass/issues/280): Fix: `condition: None` caused error in directive @Jimmy01240397
 - [#306](https://github.com/thatmattlove/hyperglass/issues/306): Fix: allow integer values in ext_community_list_raw field for Arista BGP - @cooperwinser
 - [#311](https://github.com/thatmattlove/hyperglass/issues/311): Fix: device and directive errors.
@@ -62,6 +71,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `HYPERGLASS_TRUSTED_PROXIES` environment variable, for reverse proxies trusted to set the client address via `X-Forwarded-For`. Defaults to `127.0.0.1,::1`. When running hyperglass in Docker behind a reverse proxy, see the new "Behind a Reverse Proxy" section of the Docker docs.
 - Docker Compose passes `HYPERGLASS_WORKERS` and `HYPERGLASS_TRUSTED_PROXIES` to the container, if they're set.
 - hyperglass now reads `hyperglass.env` from `HYPERGLASS_APP_PATH`, as documented (previously, only the sample systemd services read it). Environment variables take precedence.
+- Pixel values for `web.logo.width` and `web.logo.height`.
 - [#304](https://github.com/thatmattlove/hyperglass/pull/304): Add FRR structured output for BGP Routes - @chriswiggins
 
 ## 2.0.4 - 2024-06-30

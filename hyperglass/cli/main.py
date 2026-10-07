@@ -23,6 +23,26 @@ def _version(value: bool) -> None:
 
 cli = typer.Typer(name="hyperglass", help="hyperglass Command Line Interface", no_args_is_help=True)
 
+SearchItem = t.TypeVar("SearchItem")
+
+
+def _search(
+    items: t.Iterable[SearchItem], search: str, *attrs: str, kind: str
+) -> t.List[SearchItem]:
+    """Get all items with an attribute matching a search pattern, or exit if there are none."""
+    try:
+        pattern = re.compile(search, re.IGNORECASE)
+    except re.error as err:
+        echo.error("Invalid search pattern {}: {}", search, err)
+        raise typer.Exit(1)
+    matching = [
+        item for item in items if any(pattern.match(str(getattr(item, a, ""))) for a in attrs)
+    ]
+    if len(matching) == 0:
+        echo.error(f"No {kind} matching {{}}", search)
+        raise typer.Exit(1)
+    return matching
+
 
 def run():
     """Run the hyperglass CLI."""
@@ -151,23 +171,7 @@ def _devices(
 
     devices = use_state("devices")
     if search is not None:
-        pattern = re.compile(search, re.IGNORECASE)
-        for device in devices:
-            if pattern.match(device.id) or pattern.match(device.name):
-                echo._console.print(
-                    Inspect(
-                        device,
-                        title=device.name,
-                        docs=False,
-                        methods=False,
-                        dunder=False,
-                        sort=True,
-                        all=False,
-                        value=True,
-                        help=False,
-                    )
-                )
-                raise typer.Exit(0)
+        devices = _search(devices, search, "id", "name", kind="devices")
 
     panels = [
         Inspect(
@@ -190,7 +194,7 @@ def _devices(
 def _directives(
     search: t.Optional[str] = typer.Argument(None, help="Directive ID or Name Search Pattern"),
 ):
-    """Show all configured devices"""
+    """Show all configured directives"""
     # Third Party
     from rich.columns import Columns
     from rich._inspect import Inspect
@@ -200,23 +204,7 @@ def _directives(
 
     directives = use_state("directives")
     if search is not None:
-        pattern = re.compile(search, re.IGNORECASE)
-        for directive in directives:
-            if pattern.match(directive.id) or pattern.match(directive.name):
-                echo._console.print(
-                    Inspect(
-                        directive,
-                        title=directive.name,
-                        docs=False,
-                        methods=False,
-                        dunder=False,
-                        sort=True,
-                        all=False,
-                        value=True,
-                        help=False,
-                    )
-                )
-                raise typer.Exit(0)
+        directives = _search(directives, search, "id", "name", kind="directives")
 
     panels = [
         Inspect(
@@ -245,7 +233,7 @@ def _plugins(
         False, "--output", show_default=False, is_flag=True, help="Show Output Plugins"
     ),
 ):
-    """Show all configured devices"""
+    """Show all registered plugins"""
     # Third Party
     from rich.columns import Columns
 
@@ -263,14 +251,7 @@ def _plugins(
     all_plugins = [plugin for _type in to_fetch for plugin in state.plugins(_type)]
 
     if search is not None:
-        pattern = re.compile(search, re.IGNORECASE)
-        matching = [plugin for plugin in all_plugins if pattern.match(plugin.name)]
-        if len(matching) == 0:
-            echo.error(f"No plugins matching {search!r}")
-            raise typer.Exit(1)
-
-        echo._console.print(Columns(matching))
-        raise typer.Exit(0)
+        all_plugins = _search(all_plugins, search, "name", kind="plugins")
 
     echo._console.print(Columns(all_plugins))
 
@@ -311,7 +292,7 @@ def _params(
             )
             raise typer.Exit(0)
         except AttributeError:
-            echo.error(f"{'params.' + path!r} does not exist")
+            echo.error("{} does not exist", f"params.{path}")
             raise typer.Exit(1)
 
     panel = Inspect(

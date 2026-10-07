@@ -46,20 +46,38 @@ def _disk() -> SystemData:
 
 
 def get_node_version() -> t.Tuple[int, int, int]:
-    """Get the system's NodeJS version."""
+    """Get the system's NodeJS version.
+
+    Raises:
+        RuntimeError: If NodeJS isn't installed, or its version can't be determined.
+    """
 
     # Standard Library
+    import re
     import shutil
     import subprocess
 
     node_path = shutil.which("node")
+    if node_path is None:
+        raise RuntimeError("NodeJS is not installed, or 'node' is not in PATH")
 
     raw_version = subprocess.check_output([node_path, "--version"]).decode()  # noqa: S603
 
-    # Node returns the version as 'v14.5.0', for example. Remove the v.
-    version = raw_version.replace("v", "")
-    # Parse the version parts.
-    return tuple((int(v) for v in version.split(".")))
+    # Node returns the version as 'v14.5.0', for example.
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", raw_version)
+    if match is None:
+        raise RuntimeError(f"Unable to determine NodeJS version from {raw_version.strip()!r}")
+    major, minor, patch = (int(v) for v in match.groups())
+    return (major, minor, patch)
+
+
+def _node_version() -> str:
+    """Get the system's NodeJS version as a string, for display."""
+    try:
+        return ".".join(str(v) for v in get_node_version())
+    except Exception as err:
+        # NodeJS is only needed to build the UI, so its absence shouldn't break system-info.
+        return f"Not available ({err})"
 
 
 def available_cpus() -> int:
@@ -118,7 +136,7 @@ def get_system_info() -> SystemData:
         "hyperglass Version": (__version__, "text"),
         "hyperglass Path": (str(Settings.app_path), "code"),
         "Python Version": (platform.python_version(), "code"),
-        "Node Version": (".".join(str(v) for v in get_node_version()), "code"),
+        "Node Version": (_node_version(), "code"),
         "Platform Info": (platform.platform(), "code"),
         "CPU Info": (cpu_info, "text"),
         "Logical Cores": (cpu_logical, "code"),

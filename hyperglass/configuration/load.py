@@ -58,7 +58,15 @@ def load_dsl(path: Path, *, empty_allowed: bool) -> LoadedConfig:
         raise ConfigLoaderMissing(path)
 
     with path.open("r") as f:
-        data = loader(f)
+        # An empty file is equivalent to no file. JSON has no representation of an empty document.
+        if path.suffix == ".json" and not f.read().strip():
+            data = None
+        else:
+            f.seek(0)
+            try:
+                data = loader(f)
+            except Exception as err:
+                raise ConfigError("'{path}' is not valid: {detail}", path=path, detail=err) from err
         if data is None and empty_allowed is False:
             raise ConfigError(
                 "'{!s}' exists, but it is empty and is required to start hyperglass.".format(path),
@@ -74,10 +82,14 @@ def load_python(path: Path, *, empty_allowed: bool) -> LoadedConfig:
     from importlib.util import module_from_spec, spec_from_file_location
 
     # Load the file as a module.
-    name, _ = path.name.split(".")
-    spec = spec_from_file_location(name, location=path)
+    spec = spec_from_file_location(path.stem, location=path)
     module = module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as err:
+        raise ConfigError(
+            "Error loading '{path}': {detail}", path=path, detail=f"{type(err).__name__}: {err}"
+        ) from err
     # Get all exports that are named 'main' (any case).
     exports = tuple(getattr(module, e, None) for e in dir(module) if e.lower() == "main")
     if len(exports) < 1:
@@ -89,17 +101,32 @@ def load_python(path: Path, *, empty_allowed: bool) -> LoadedConfig:
     main, *_ = exports
     data = None
     if isinstance(main, t.Callable):
-        if inspect.iscoroutinefunction(main):
-            # Resolve an async funcion.
-            data = run_coroutine_in_new_thread(main)
-        else:
-            # Resolve a standard function.
-            data = main()
+        try:
+            if inspect.iscoroutinefunction(main):
+                # Resolve an async funcion.
+                data = run_coroutine_in_new_thread(main)
+            else:
+                # Resolve a standard function.
+                data = main()
+        except Exception as err:
+            # Never fall back to an empty configuration because a user's function failed.
+            raise ConfigError(
+                "Error loading '{path}', 'main' raised an exception: {detail}",
+                path=path,
+                detail=f"{type(err).__name__}: {err}",
+            ) from err
     elif isinstance(main, (t.Dict, t.List, t.Tuple)):
         data = main
 
-    if data is None and empty_allowed is False:
-        raise ConfigError(f"'{path!s} exists', but variable or function 'main' is an invalid type")
+    if not isinstance(data, (t.Dict, t.List, t.Tuple)):
+        # Even if this file is optional, using defaults instead of a broken configuration would
+        # be unexpected.
+        raise ConfigError(
+            "'{path}' exists, but 'main' is not a dictionary, or a function returning one "
+            "(got '{kind}')",
+            path=path,
+            kind=type(data).__name__,
+        )
 
     log.bind(path=path).debug("Loaded configuration")
     return data or {}

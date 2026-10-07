@@ -3,6 +3,7 @@
 # Standard Library
 import re
 import typing as t
+import unicodedata
 from pathlib import Path
 from ipaddress import IPv4Address, IPv6Address
 
@@ -21,7 +22,7 @@ from hyperglass.constants import (
     LINUX_PLATFORMS,
     SUPPORTED_STRUCTURED_OUTPUT,
 )
-from hyperglass.exceptions.private import ConfigError, UnsupportedDevice
+from hyperglass.exceptions.private import ConfigError, ConfigInvalid, UnsupportedDevice
 
 # Local
 from ..main import MultiModel, HyperglassModel, HyperglassModelWithId
@@ -87,16 +88,27 @@ class Device(HyperglassModelWithId, extra="allow"):
         """Generate device id & handle legacy display_name field."""
 
         def generate_id(name: str) -> str:
-            scrubbed = re.sub(r"[^A-Za-z0-9\_\-\s]", "", name)
+            # Normalize so equivalent Unicode names (e.g. composed or decomposed accents) produce
+            # the same ID. Unicode `\w` matches letters & digits in any script, and only
+            # `[A-Za-z0-9_]` for ASCII names, so ASCII names' IDs are unchanged.
+            normalized = unicodedata.normalize("NFKC", name)
+            scrubbed = re.sub(r"[^\w\-\s]", "", normalized)
             return "_".join(scrubbed.split()).lower()
 
+        values = {**values}
         name = values.pop("name", None)
 
         if name is None:
             raise ValueError("name is required.")
 
-        device_id = generate_id(name)
+        device_id = generate_id(str(name))
         display_name = name
+
+        if not device_id and not values.get("id"):
+            raise ValueError(
+                "Unable to generate an ID from the device name, as it doesn't contain letters "
+                "or digits. Set a unique 'id' for the device."
+            )
 
         return {"id": device_id, "name": display_name, "display_name": None, **values}
 
@@ -149,12 +161,12 @@ class Device(HyperglassModelWithId, extra="allow"):
         return self.platform
 
     def _validate_directive_attrs(self) -> None:
-        # Set of all keys except for built-in key `target`.
+        # Set of all keys except for built-in keys `target` & `mask`, which are set from the target.
         keys = {
             key
             for group in [get_fmt_keys(command) for command in self.directive_commands]
             for key in group
-            if key != "target"
+            if key not in ("target", "mask")
         }
 
         attrs = {k: v for k, v in self.attrs.items() if k in keys}
@@ -196,6 +208,11 @@ class Device(HyperglassModelWithId, extra="allow"):
             from PIL import Image
 
             target = Settings.static_path / "images" / value.name
+            if target.exists() and target.samefile(value):
+                # The avatar is already in the static directory, use it as-is so the user's
+                # file is never modified.
+                return value
+            target.parent.mkdir(parents=True, exist_ok=True)
             copied = shutil.copy2(value, target)
             log.bind(
                 device=info.data["name"],
@@ -309,9 +326,32 @@ class Device(HyperglassModelWithId, extra="allow"):
 class Devices(MultiModel, model=Device, unique_by="id"):
     """Container for all devices."""
 
-    def __init__(self: "Devices", *items: t.Dict[str, t.Any]) -> None:
-        """Generate IDs prior to validation."""
-        with_id = (Device._with_id(item) for item in items)
+    def __init__(self: "Devices", *items: t.Union[Device, t.Dict[str, t.Any]]) -> None:
+        """Generate IDs prior to validation, and ensure IDs are unique."""
+        with_id = [item if isinstance(item, Device) else Device._with_id(item) for item in items]
+
+        # Devices are looked up by ID, so a duplicate ID would silently direct queries to the
+        # wrong device.
+        names_by_id: t.Dict[str, str] = {}
+        for item in with_id:
+            device_id, name = (
+                (item.id, item.name) if isinstance(item, Device) else (item["id"], item["name"])
+            )
+            if device_id in names_by_id:
+                raise ConfigInvalid(
+                    errors=[
+                        {
+                            "loc": ("devices", name),
+                            "msg": (
+                                f"Device '{name}' has the same ID ('{device_id}') as device "
+                                f"'{names_by_id[device_id]}'. Device IDs are generated from "
+                                "device names; rename one of the devices, or set a unique 'id'."
+                            ),
+                        }
+                    ]
+                )
+            names_by_id[device_id] = name
+
         super().__init__(*with_id)
 
     def export_api(self: "Devices") -> t.List[APIDevice]:

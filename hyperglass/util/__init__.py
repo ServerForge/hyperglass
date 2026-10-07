@@ -14,6 +14,7 @@ from .tools import (
     repr_from_attrs,
     deep_convert_keys,
     split_on_uppercase,
+    replace_placeholders,
     run_coroutine_in_new_thread,
 )
 from .typing import is_type, is_series
@@ -48,6 +49,7 @@ __all__ = (
     "move_files",
     "parse_exception",
     "repr_from_attrs",
+    "replace_placeholders",
     "resolve_hostname",
     "run_coroutine_in_new_thread",
     "snake_to_camel",

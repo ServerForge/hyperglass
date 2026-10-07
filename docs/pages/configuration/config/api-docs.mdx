@@ -4,7 +4,7 @@ hyperglass automatically generates documentation for the REST API. The `docs` se
 
 | Parameter          | Type    | Default Value                  | Description                                                                                     |
 | :----------------- | :------ | :----------------------------- | :---------------------------------------------------------------------------------------------- |
-| `docs.base_url`    | String  | https://lg.example.com         | Used for REST API samples. See the [demo](https://demo.hyperglass.dev/api/docs) for an example. |
+| `docs.base_url`    | String  | https://lg.example.net         | Used for REST API samples. See the [demo](https://demo.hyperglass.dev/api/docs) for an example. |
 | `docs.enable`      | Boolean | `true`                         | Enable or disable the REST API documentation.                                                   |
 | `docs.path`        | String  | /api/docs                      | Path to the REST API documentation.                                                             |
 | `docs.title`       | String  | `site_title` API Documentation | API docs title. Uses the `site_title` parameter from the [global](#global) parameters.          |
@@ -38,7 +38,7 @@ The documentation for API endpoints follow a common schema:
 | `docs.queries.title`       | Supported Queries                                                                           |
 | `docs.queries.description` | List of supported query types.                                                              |
 | `docs.queries.summary`     | Query Types                                                                                 |
-| `docs.query.title`         | Supported Query                                                                             |
+| `docs.query.title`         | Submit Query                                                                                |
 | `docs.query.description`   | Request a query response per-location.                                                      |
 | `docs.query.summary`       | Query the Looking Glass                                                                     |
 
@@ -46,12 +46,11 @@ The documentation for API endpoints follow a common schema:
 
 ```yaml filename="config.yaml"
 docs:
-    base_url: https://lg.example.com
+    base_url: https://lg.example.net
     enable: true
-    mode: redoc
     path: /api/docs
-    title: Beloved Hyperglass User Looking Glass API Documentation
-    description: null
+    title: "{site_title} API Documentation"
+    description: ""
     # API Endpoints ↓
     devices:
         title: Devices
@@ -66,7 +65,7 @@ docs:
         description: List of supported query types.
         summary: Query Types
     query:
-        title: Supported Query
+        title: Submit Query
         description: Request a query response per-location.
         summary: Query the Looking Glass
 ```

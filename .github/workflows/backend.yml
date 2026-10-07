@@ -58,13 +58,17 @@ jobs:
                   echo "HYPERGLASS_HOST=127.0.0.1" >> $GITHUB_ENV
                   echo "HYPERGLASS_PORT=8001" >> $GITHUB_ENV
 
+            # Without a pinned version, Rye uses its own default Python, not the matrix version.
             - name: Install
-              run: rye sync
+              run: |
+                  rye pin ${{ matrix.python-version }}
+                  rye sync
 
             - name: Activate virtualenv
               run: |
                   . .venv/bin/activate
                   echo PATH=$PATH >> $GITHUB_ENV
+                  python -c "import sys; v = '.'.join(map(str, sys.version_info[:2])); assert v == '${{ matrix.python-version }}', f'Python {v} is installed, expected ${{ matrix.python-version }}'"
 
             - name: Lint (Rye)
               run: rye lint

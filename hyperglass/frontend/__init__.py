@@ -2,8 +2,6 @@
 
 # Standard Library
 import os
-import math
-import shutil
 import typing as t
 import asyncio
 import hashlib
@@ -18,6 +16,9 @@ from .render import BUILD_ID_FILE, render_ui
 from .favicons import generate_favicons
 
 if t.TYPE_CHECKING:
+    # Third Party
+    from PIL import Image
+
     # Project
     from hyperglass.models.ui import UIParameters
 
@@ -122,60 +123,66 @@ async def build_ui(timeout: int = 180, force: bool = False) -> bool:
     return True
 
 
+def _to_rgb_or_rgba(image: "Image.Image") -> "Image.Image":
+    """Convert an image of any mode to RGB, or to RGBA if it has transparency."""
+    if image.mode.startswith("I"):
+        # 16 or 32-bit grayscale; converting directly to 8-bit clips most values to white.
+        image = image.convert("I").point(lambda value: value * (1 / 256)).convert("L")
+    if image.mode in ("RGBA", "RGBa", "LA", "La", "PA") or "transparency" in image.info:
+        return image.convert("RGBA")
+    return image.convert("RGB")
+
+
 def generate_opengraph(
     image_path: Path,
     max_width: int,
     max_height: int,
     target_path: Path,
-    background_color: str,
+    background_color: t.Any,
 ):
-    """Generate an OpenGraph compliant image."""
+    """Generate an OpenGraph compliant image from a source image, without modifying the source."""
     # Third Party
     from PIL import Image
-
-    def center_point(background: Image, foreground: Image):
-        """Generate a tuple of center points for PIL."""
-        bg_x, bg_y = background.size[0:2]
-        fg_x, fg_y = foreground.size[0:2]
-        x1 = math.floor((bg_x / 2) - (fg_x / 2))
-        y1 = math.floor((bg_y / 2) - (fg_y / 2))
-        x2 = math.floor((bg_x / 2) + (fg_x / 2))
-        y2 = math.floor((bg_y / 2) + (fg_y / 2))
-        return (x1, y1, x2, y2)
 
     # Convert image to JPEG format with static name "opengraph.jpg"
     dst_path = target_path / "opengraph.jpg"
 
-    # Copy the original image to the target path
-    copied = shutil.copy2(image_path, target_path)
-    log.bind(source=str(image_path), destination=str(target_path)).debug("Copied OpenGraph image")
+    if dst_path.exists() and dst_path.samefile(image_path):
+        # The configured image is the generated image's path, so it's used as-is rather than
+        # (repeatedly) re-encoding the user's file.
+        log.bind(path=str(dst_path)).debug("OpenGraph image is already in place")
+        return True
 
-    with Image.open(copied) as src:
-        # Only resize the image if it needs to be resized
-        if src.size[0] != max_width or src.size[1] != max_height:
-            # Resize image while maintaining aspect ratio
-            log.debug("Opengraph image is not 1200x630, resizing...")
-            src.thumbnail((max_width, max_height))
+    # Background colors may be a `Color` (from configuration) or a string.
+    if hasattr(background_color, "as_rgb_tuple"):
+        background_color = background_color.as_rgb_tuple(alpha=False)
 
-        # Only impose a background image if the original image has
-        # alpha/transparency channels
-        if src.mode in ("RGBA", "LA"):
-            log.debug("Opengraph image has transparency, converting...")
-            background = Image.new("RGB", (max_width, max_height), background_color)
-            background.paste(src, box=center_point(background, src))
-            dst = background
-        else:
-            dst = src
+    # Read the source image directly; it's never copied, moved, or written to.
+    with Image.open(image_path) as src:
+        image = _to_rgb_or_rgba(src)
 
-        # Save new image to derived target path
-        dst.save(dst_path)
+    # Only resize the image if it needs to be resized
+    if image.size != (max_width, max_height):
+        # Resize image while maintaining aspect ratio
+        log.debug("Opengraph image is not 1200x630, resizing...")
+        image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
 
-        # Delete the copied image
-        Path(copied).unlink()
+    # Only impose a background image if the original image has
+    # alpha/transparency channels
+    if image.mode == "RGBA":
+        log.debug("Opengraph image has transparency, converting...")
+        background = Image.new("RGB", (max_width, max_height), background_color)
+        position = ((max_width - image.width) // 2, (max_height - image.height) // 2)
+        # Use the alpha channel as a mask, so transparent pixels show the background.
+        background.paste(image, position, mask=image)
+        image = background
 
-        if not dst_path.exists():
-            raise RuntimeError(f"Unable to save resized image to {str(dst_path)}")
-        log.bind(path=str(dst_path)).debug("OpenGraph image ready")
+    # Save new image to derived target path
+    image.save(dst_path, "JPEG")
+
+    if not dst_path.exists():
+        raise RuntimeError(f"Unable to save resized image to {str(dst_path)}")
+    log.bind(path=str(dst_path)).debug("OpenGraph image ready")
 
     return True
 
@@ -191,6 +198,9 @@ def migrate_images(app_path: Path, params: "UIParameters"):
     for image in ("light", "dark", "favicon"):
         src: Path = getattr(params.web.logo, image)
         dst = images_dir / f"{image + src.suffix}"
+        if dst.exists() and dst.samefile(src):
+            # The source is already in place.
+            continue
         src_files += (src,)
         dst_files += (dst,)
     return copyfiles(src_files, dst_files)

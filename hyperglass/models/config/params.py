@@ -2,13 +2,13 @@
 
 # Standard Library
 import typing as t
-import urllib.parse
 from pathlib import Path
 
 # Third Party
 from pydantic import Field, HttpUrl, ConfigDict, ValidationInfo, field_validator
 
 # Project
+from hyperglass.util import replace_placeholders
 from hyperglass.settings import Settings
 from hyperglass.constants import __version__
 
@@ -60,7 +60,7 @@ class ParamsPublic(HyperglassModel):
     site_description: str = Field(
         "{org_name} Network Looking Glass",
         title="Site Description",
-        description='A short description of your hyperglass site. This field is used in th UI & API documentation to set the `<meta name="description"/>` tag. `{org_name}` may be used to insert the value of the `org_name` field.',
+        description='A short description of your hyperglass site. This field is used in th UI & API documentation to set the `<meta name="description"/>` tag. `{org_name}`, `{primary_asn}`, or `{site_title}` may be used to insert the value of the respective field.',
     )
 
 
@@ -97,8 +97,11 @@ class Params(ParamsPublic, HyperglassModel):
 
     @field_validator("site_description")
     def validate_site_description(cls: "Params", value: str, info: ValidationInfo) -> str:
-        """Format the site description with the org_name field."""
-        return value.format(org_name=info.data.get("org_name"))
+        """Format the site description with the org_name, primary_asn, & site_title fields."""
+        return replace_placeholders(
+            value,
+            **{k: info.data[k] for k in ("org_name", "primary_asn", "site_title") if k in info.data},
+        )
 
     @field_validator("primary_asn")
     def validate_primary_asn(cls: "Params", value: t.Union[int, str]) -> str:
@@ -124,15 +127,19 @@ class Params(ParamsPublic, HyperglassModel):
     @field_validator("web", mode="after")
     @classmethod
     def validate_web(cls, web: Web, info: ValidationInfo) -> Web:
-        """String-format Link URLs."""
+        """Replace known placeholders in link URLs & menu content, leaving other text as-is."""
+        primary_asn = str(info.data.get("primary_asn", "65000"))
         for link in web.links:
-            url = urllib.parse.unquote(str(link.url), encoding="utf-8", errors="replace").format(
-                primary_asn=info.data.get("primary_asn", "65000")
-            )
-            link.url = HttpUrl(url)
+            url = str(link.url)
+            # Braces in a URL's path are percent-encoded.
+            for placeholder in ("{primary_asn}", "%7Bprimary_asn%7D", "%7bprimary_asn%7d"):
+                url = url.replace(placeholder, primary_asn)
+            if url != str(link.url):
+                link.url = HttpUrl(url)
 
         for menu in web.menus:
-            menu.content = menu.content.format(
+            menu.content = replace_placeholders(
+                menu.content,
                 site_title=info.data.get("site_title", "hyperglass"),
                 org_name=info.data.get("org_name", "hyperglass"),
                 version=__version__,

@@ -31,15 +31,15 @@ def get_directive_variable(path: Path, variable: str) -> t.Any:
     return value
 
 
-def create_platform_list() -> str:
+def create_platform_list(file_: t.Optional[Path] = None) -> str:
     """Create a list of platforms as a JSON file for use by the docs."""
     # Third Party
     from netmiko.ssh_dispatcher import CLASS_MAPPER  # type: ignore
 
     project_root = Path(__file__).parent.parent.parent
 
-    dir_ = project_root / "docs"
-    file_ = dir_ / "platforms.json"
+    if file_ is None:
+        file_ = project_root / "docs" / "platforms.json"
 
     builtin_directives = project_root / "hyperglass" / "defaults" / "directives"
 
@@ -53,7 +53,7 @@ def create_platform_list() -> str:
             if not isinstance(name, str):
                 raise RuntimeError("'NAME' variable is missing or invalid in '{!s}'".format(path))
             _platforms = get_directive_variable(path, "PLATFORMS")
-            if not isinstance(_platforms, t.Tuple, t.List):
+            if not isinstance(_platforms, (tuple, list)):
                 raise RuntimeError(
                     "'PLATFORMS' variable is missing or invalid in '{!s}'".format(path)
                 )

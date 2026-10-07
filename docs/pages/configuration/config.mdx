@@ -11,20 +11,22 @@ The `config.yaml` file is broken into multiple sections:
 | :----------------- | :-------------- | :------------------------------- | :------------------------------------------------------------ |
 | `org_name`         | String          | Beloved Hyperglass User          | Your organization's name.                                     |
 | `plugins`          | List of Strings |                                  | List of hyperglass [plugins](/plugins) to load.               |
-| `primary_asn`      | String          | 65000                            | Your organization's primary ASN. Used to set default UI text. |
+| `primary_asn`      | String          | 65001                            | Your organization's primary ASN. Used to set default UI text. |
 | `request_timeout`  | Number          | 90                               | Global timeout in seconds for all requests.                   |
 | `site_description` | String          | `org_name` Network Looking Glass | `<meta>` description, also used in the API documentation.     |
-| `site_title`       | String          | `org_name`                       | Browser title, also used in the default terms & conditions.   |
+| `site_title`       | String          | hyperglass                       | Browser title, also used in the default terms & conditions.   |
+
+`site_description` may contain `{org_name}`, `{primary_asn}`, or `{site_title}`, which are replaced with the value of the respective parameter.
 
 #### Example with Defaults
 
 ```yaml filename="config.yaml"
 org_name: Beloved Hyperglass User
 plugins: []
-primary_asn: 65000
+primary_asn: 65001
 request_timeout: 90
-site_description: Beloved Hyperglass User Network Looking Glass
-site_title: Beloved Hyperglass User
+site_description: "{org_name} Network Looking Glass"
+site_title: hyperglass
 ```
 
 ## Other Configuration Sections

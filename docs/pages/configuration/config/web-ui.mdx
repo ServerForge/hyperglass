@@ -27,8 +27,10 @@ hyperglass provides extensive customization options for the look and feel of the
 | `web.logo.light`   | String           |               | Path to logo to show in light mode.                |
 | `web.logo.dark`    | String           |               | Path to logo to show in dark mode.                 |
 | `web.logo.favicon` | String           |               | Path to icon/logo from which to generate favicons. |
-| `web.logo.width`   | Number or String | 100%          | Width of logo, either as pixels or a percentage.   |
+| `web.logo.width`   | Number or String | 50%           | Width of logo, either as pixels or a percentage.   |
 | `web.logo.height`  | Number or String |               | Height of logo, either as pixels or a percentage.  |
+
+Percentages must be from `1%` to `100%`. Pixels may be specified as a number (e.g. `200`) or with a `px` unit (e.g. `200px`).
 
 ##### Example
 
@@ -38,7 +40,7 @@ web:
         light: /path/to/light-logo.svg
         dark: /path/to/dark-logo.svg
         favicon: /path/to/favicon.svg
-        width: 100%
+        width: 50%
         height: null
 ```
 

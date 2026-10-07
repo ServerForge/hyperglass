@@ -7,7 +7,6 @@ import shutil
 import typing as t
 import getpass
 from types import TracebackType
-from filecmp import dircmp
 from pathlib import Path
 
 # Third Party
@@ -15,7 +14,6 @@ import typer
 from rich.progress import Progress
 
 # Project
-from hyperglass.util import compare_lists
 from hyperglass.settings import Settings
 from hyperglass.constants import __version__
 
@@ -72,6 +70,9 @@ class Installer:
     ):
         """Print errors on exit."""
         self.progress.stop()
+        if isinstance(exc_value, typer.Exit):
+            # Exit with the same code; the error has already been reported, e.g. by `build_ui()`.
+            return
         if exc_type is not None:
             echo._console.print_exception(show_locals=True)
             raise typer.Exit(1)
@@ -119,58 +120,26 @@ class Installer:
             time.sleep(0.4)
 
     def migrate_static_assets(self, task_id: int) -> None:
-        """Synchronize the project assets with the installation assets."""
+        """Copy any of the project's assets missing from the installation's assets.
+
+        The installation's asset directory also contains user files (e.g. logos & avatars), so
+        existing files are never removed or replaced.
+        """
 
         target_dir = self.app_path / "static" / "images"
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-        def copy_func(src: str, dst: str):
-            time.sleep(self.assets / 10)
-
-            exists = Path(dst).exists()
-            if not exists:
-                copied = shutil.copy2(src, dst)
-                self.progress.print(f"Copied {copied!s}", style="info")
+        for asset in sorted(ASSET_DIR.iterdir()):
+            if asset.name in IGNORED_FILES:
+                continue
+            target = target_dir / asset.name
+            if not target.exists():
+                if asset.is_dir():
+                    shutil.copytree(asset, target, ignore=shutil.ignore_patterns(*IGNORED_FILES))
+                else:
+                    shutil.copy2(asset, target)
+                self.progress.print(f"Copied {target!s}", style="info")
             self.progress.advance(task_id)
-            return dst
-
-        if not target_dir.exists():
-            shutil.copytree(
-                ASSET_DIR,
-                target_dir,
-                ignore=shutil.ignore_patterns(*IGNORED_FILES),
-                copy_function=copy_func,
-            )
-
-        # Compare the contents of the project's asset directory (considered
-        # the source of truth) with the installation directory. If they do
-        # not match, delete the installation directory's asset directory and
-        # re-copy it.
-        compare_initial = dircmp(ASSET_DIR, target_dir, ignore=IGNORED_FILES)
-
-        if not compare_lists(
-            compare_initial.left_list,
-            compare_initial.right_list,
-            ignore=["hyperglass-opengraph.jpg"],
-        ):
-            shutil.rmtree(target_dir)
-            shutil.copytree(
-                ASSET_DIR,
-                target_dir,
-                copy_function=copy_func,
-                ignore=shutil.ignore_patterns(*IGNORED_FILES),
-            )
-
-            # Re-compare the source and destination directory contents to
-            # ensure they match.
-            compare_post = dircmp(ASSET_DIR, target_dir, ignore=IGNORED_FILES)
-
-            if not compare_lists(
-                compare_post.left_list, compare_post.right_list, ignore=["hyperglass-opengraph.jpg"]
-            ):
-                echo.error("Files in {!s} do not match files in {!s}", ASSET_DIR, target_dir)
-                raise typer.Exit(1)
-        else:
-            self.progress.update(task_id, completed=self.assets, refresh=True)
 
     def init_ui(self, task_id: int) -> None:
         """Initialize UI."""
@@ -180,8 +149,11 @@ class Installer:
         # Local
         from .util import build_ui
 
-        with self.progress.console.capture():
-            log.disable("hyperglass")
+        self.progress.start_task(task_id)
+        log.disable("hyperglass")
+        try:
+            # Build errors are printed by `build_ui()`, so console output must not be captured.
             build_ui(timeout=180)
+        finally:
             log.enable("hyperglass")
         self.progress.advance(task_id)
