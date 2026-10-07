@@ -47,8 +47,8 @@ OpenBGPD_BGPASPath = BuiltinDirective(
             condition="*",
             action="permit",
             commands=[
-                "bgpctl show rib inet as {target}",
-                "bgpctl show rib inet6 as {target}",
+                "bgpctl show rib inet as '{target}'",
+                "bgpctl show rib inet6 as '{target}'",
             ],
         )
     ],
@@ -64,8 +64,8 @@ OpenBGPD_BGPCommunity = BuiltinDirective(
             condition="*",
             action="permit",
             commands=[
-                "bgpctl show rib inet community {target}",
-                "bgpctl show rib inet6 community {target}",
+                "bgpctl show rib inet community '{target}'",
+                "bgpctl show rib inet6 community '{target}'",
             ],
         )
     ],

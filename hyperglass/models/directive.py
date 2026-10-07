@@ -208,7 +208,10 @@ class RuleWithPattern(Rule):
                 pattern = re.compile(".+", re.IGNORECASE)
             else:
                 pattern = re.compile(self.condition, re.IGNORECASE)
-            is_match = pattern.fullmatch(value)
+            # Targets are interpolated into device commands, so a permitted target must match the
+            # whole pattern. A denied target only needs to start with a match.
+            match = pattern.fullmatch if self.action == "permit" else pattern.match
+            is_match = match(value)
 
             if is_match and self.action == "permit":
                 return True
@@ -217,15 +220,14 @@ class RuleWithPattern(Rule):
             return False
 
         if isinstance(target, t.List):
-            for result in (validate_single_value(v) for v in target):
+            # Check every value, so a value matching a deny rule can't follow one that doesn't.
+            results = [validate_single_value(v) for v in target]
+            for result in results:
                 if isinstance(result, BaseException):
                     self._passed = False
                     raise result
-                if result is False:
-                    self._passed = False
-                    return result
-            self._passed = True
-            return True
+            self._passed = len(results) > 0 and all(results)
+            return self._passed
 
         result = validate_single_value(target)
 

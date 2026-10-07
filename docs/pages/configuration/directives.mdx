@@ -104,7 +104,7 @@ The output for both commands will be shown as the query result.
 
 ### Regex Validation
 
-To validate input by regex pattern, just specify a regex pattern as the `condition`
+To validate input by regex pattern, just specify a regex pattern as the `condition`. For a `permit` rule, the pattern must match the entire query target (as if it were wrapped in `^` and `$`). For a `deny` rule, the pattern only needs to match the beginning of the query target; for example, `65000:` denies every community starting with `65000:`.
 
 ```yaml filename="directives.yaml" copy
 your-directive:

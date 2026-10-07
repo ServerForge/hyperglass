@@ -7,8 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Security
-- Query targets are now restricted to characters used by IP prefixes, BGP communities and AS path expressions. Previously, crafted BGP community/AS path queries (or IPv6 zone IDs, e.g. `2001:db8::1%x"; id; "`) could inject commands into the device CLI, or into a shell on FRR, BIRD and TNSR.
-- **Behavior change:** regex `condition` patterns on directive rules now must match the entire query target (`re.fullmatch`) instead of only its beginning.
+- Query targets are now restricted to characters used by IP prefixes, BGP communities and AS path expressions, and `|` is only accepted as regex alternation (directly followed by a digit, `_`, `^` or `[`). Previously, crafted BGP community/AS path queries (or IPv6 zone IDs, e.g. `2001:db8::1%x"; id; "`) could inject commands into the device CLI, or into a shell on FRR, BIRD, OpenBGPD and TNSR. OpenBGPD AS path & community commands now also quote the query target.
+- **Behavior change:** regex `condition` patterns on directive `permit` rules now must match the entire query target (`re.fullmatch`) instead of only its beginning. `deny` rules still match the beginning of the query target.
+- A directive `deny` rule could be bypassed by querying a list of targets in which the denied value wasn't first.
 - Upgraded dependencies with known vulnerabilities (Litestar, paramiko, cryptography, Jinja2, h11, idna, Next.js and others). Removed the unused `PyJWT`, `distro` and `aiofiles` dependencies, plus unused frontend ESLint/Prettier tooling.
 
 ### Changed
