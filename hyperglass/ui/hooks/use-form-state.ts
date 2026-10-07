@@ -6,7 +6,7 @@ import create from 'zustand';
 import { queryClient } from '~/context';
 import { all, andJoin, dedupObjectArray, withDev } from '~/util';
 
-import type { UseFormClearErrors, UseFormSetError } from 'react-hook-form';
+import type { UseFormClearErrors, UseFormSetError, UseFormSetValue } from 'react-hook-form';
 import type { MultiValue, SingleValue } from 'react-select';
 import type { StateCreator } from 'zustand';
 import type { Device, Directive, FormData, SingleOption, Text } from '~/types';
@@ -72,6 +72,7 @@ interface FormStateType<Opt extends SingleOption = SingleOption> {
     extra: {
       setError: UseFormSetError<FormData>;
       clearErrors: UseFormClearErrors<FormData>;
+      setValue: UseFormSetValue<FormData>;
       getDevice: UseDeviceReturn;
       text: Text;
     },
@@ -137,11 +138,12 @@ const formState: StateCreator<FormStateType> = (set, get) => ({
     extra: {
       setError: UseFormSetError<FormData>;
       clearErrors: UseFormClearErrors<FormData>;
+      setValue: UseFormSetValue<FormData>;
       getDevice: UseDeviceReturn;
       text: Text;
     },
   ): void {
-    const { setError, clearErrors, getDevice, text } = extra;
+    const { setError, clearErrors, setValue, getDevice, text } = extra;
 
     clearErrors('queryLocation');
     set(state => ({ form: { ...state.form, queryLocation: locations } }));
@@ -173,8 +175,34 @@ const formState: StateCreator<FormStateType> = (set, get) => ({
 
     set({ filtered: { groups: intersecting, types: directives } });
 
-    // If there is only one intersecting group, set it as the form value so the user doesn't have to.
     const { selections, form } = get();
+
+    /**
+     * Select a query type in the form state, react-hook-form, and the query type field, clearing
+     * the target if the query type changed (a target for one query type may not suit another).
+     */
+    const selectQueryType = (directive: Directive | null): void => {
+      const queryType = directive?.id ?? '';
+      const option =
+        directive === null
+          ? null
+          : { label: directive.name, value: directive.id, group: directive.groups[0] ?? '' };
+      const clearTarget = queryType !== form.queryType;
+      set(state => ({
+        form: {
+          ...state.form,
+          queryType,
+          queryTarget: clearTarget ? [] : state.form.queryTarget,
+        },
+        selections: { ...state.selections, queryType: option },
+        target: clearTarget ? { display: '' } : state.target,
+      }));
+      setValue('queryType', queryType);
+      if (clearTarget) {
+        setValue('queryTarget', []);
+      }
+    };
+
     if (
       (form.queryLocation.length > 1 || locations.length > 1) &&
       intersectingDirectives.length === 0
@@ -184,8 +212,16 @@ const formState: StateCreator<FormStateType> = (set, get) => ({
       const types = plur(text.queryType, 2);
       const message = `${start} ${locationsAnd} have no ${types} in common.`;
       setError('queryLocation', { message });
-    } else if (intersectingDirectives.length === 1) {
-      set(state => ({ form: { ...state.form, queryType: intersectingDirectives[0].id } }));
+    } else if (directives.length === 1) {
+      // If there is only one query type in common, select it so the user doesn't have to.
+      selectQueryType(directives[0]);
+    } else if (
+      form.queryType !== '' &&
+      directives.length > 0 &&
+      !directives.some(d => d.id === form.queryType)
+    ) {
+      // The selected query type isn't supported by all selected locations.
+      selectQueryType(null);
     }
   },
 

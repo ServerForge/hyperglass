@@ -13,7 +13,7 @@ import {
 } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import startCase from 'lodash/startCase';
-import { forwardRef, memo, useEffect, useMemo, useState } from 'react';
+import { forwardRef, memo, useEffect, useMemo, useRef, useState } from 'react';
 import isEqual from 'react-fast-compare';
 import { Else, If, Then } from 'react-if';
 import { BGPTable, Path, TextOutput } from '~/components';
@@ -29,6 +29,7 @@ import {
   useTableToString,
 } from '~/hooks';
 import { isStringOutput, isStructuredOutput } from '~/types';
+import { isTimeoutError } from '~/util';
 import { CopyButton } from './copy-button';
 import { FormattedError } from './formatted-error';
 import { isFetchError, isLGError, isLGOutputOrError, isStackError } from './guards';
@@ -87,28 +88,29 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
     _setErrorLevel(e);
   };
 
-  const { data, error, isLoading, refetch, isFetchedAfterMount } = useLGQuery(
-    { queryLocation, queryTarget: form.queryTarget, queryType: form.queryType },
-    {
-      onSuccess(data) {
-        if (device !== null) {
-          addResponse(device.id, data);
-        }
-        if (isLGOutputOrError(data)) {
-          console.error(data);
-          setErrorLevel(data.level);
-        }
+  const { data, error, isLoading, isFetching, refetch, isFetchedAfterMount, dataUpdatedAt } =
+    useLGQuery(
+      { queryLocation, queryTarget: form.queryTarget, queryType: form.queryType },
+      {
+        onSuccess(data) {
+          if (device !== null) {
+            addResponse(device.id, data);
+          }
+          if (isLGOutputOrError(data)) {
+            console.error(data);
+            setErrorLevel(data.level);
+          }
+        },
+        onError(error) {
+          console.error({ error });
+          setErrorLevel(isLGOutputOrError(error) ? error.level : 'error');
+        },
       },
-      onError(error) {
-        console.error({ error });
-        if (isLGOutputOrError(error)) {
-          setErrorLevel(error.level);
-        }
-      },
-    },
-  );
+    );
 
-  const isError = useMemo(() => isLGOutputOrError(data), [data, error]);
+  // A request can fail (e.g. a timeout, network error, or HTML error page from a reverse proxy),
+  // or succeed with an error response from hyperglass.
+  const isError = useMemo(() => !!error || isLGOutputOrError(data), [data, error]);
 
   const isCached = useMemo(() => data?.cached || !isFetchedAfterMount, [data, isFetchedAfterMount]);
 
@@ -117,28 +119,29 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
 
   const errorKeywords = useMemo(() => {
     let kw = [] as string[];
-    if (isLGError(data)) {
+    if (!error && isLGError(data)) {
       kw = data.keywords;
     }
     return kw;
-  }, [data]);
+  }, [data, error]);
 
   // Parse the the response and/or the error to determine from where to extract the error message.
+  // A failed request takes precedence, as `data` may be from a previous request.
   const errorMsg = useMemo(() => {
     if (isLGError(error)) {
       return error.output as string;
     }
-    if (isLGOutputOrError(data)) {
-      return data.output as string;
-    }
     if (isFetchError(error)) {
       return startCase(error.statusText);
     }
-    if (isStackError(error) && error.message.toLowerCase().startsWith('timeout')) {
+    if (isTimeoutError(error)) {
       return messages.requestTimeout;
     }
     if (isStackError(error)) {
       return startCase(error.message);
+    }
+    if (isLGOutputOrError(data)) {
+      return data.output as string;
     }
     return messages.general;
   }, [error, data, messages.general, messages.requestTimeout]);
@@ -163,14 +166,17 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
     copyValue = errorMsg;
   }
 
-  // Signal to the group that this result is done loading.
+  // Signal to the group that this result is done loading, opening it if no other result is open.
+  // This is only done once, so the user can collapse all results.
+  const autoOpened = useRef(false);
   useEffect(() => {
-    // Only set the index if it's not already set and the query is finished loading.
-    if (Array.isArray(indices) && indices.length === 0 && !isLoading) {
-      // Only set the index if the response has data or an error.
-      if (data || isError) {
-        setIndex([index]);
-      }
+    // Only set the index once the query is finished loading, and the response has data or an error.
+    if (autoOpened.current || isLoading || !(data || isError)) {
+      return;
+    }
+    autoOpened.current = true;
+    if (Array.isArray(indices) && indices.length === 0) {
+      setIndex([index]);
     }
   }, [data, index, indices, isLoading, isError, setIndex]);
 
@@ -203,22 +209,23 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
       }}
     >
       <AccordionHeaderWrapper>
-        <AccordionButton py={2} w="unset" _hover={{}} _focus={{}} flex="1 0 auto">
+        {/* The title shrinks, so the actions remain visible on narrow screens. */}
+        <AccordionButton py={2} w="unset" _hover={{}} _focus={{}} flex="1 1 auto" minW={0}>
           <ResultHeader
             isError={isError}
-            loading={isLoading}
+            loading={isFetching}
             errorMsg={errorMsg}
             errorLevel={errorLevel}
             runtime={data?.runtime ?? 0}
             title={device.name}
           />
         </AccordionButton>
-        <HStack py={2} spacing={1}>
+        <HStack py={2} spacing={1} flexShrink={0}>
           {isStructuredOutput(data) && data.level === 'success' && tableComponent && (
             <Path device={device.id} />
           )}
-          <CopyButton copyValue={copyValue} isDisabled={isLoading} />
-          <RequeryButton requery={refetch} isDisabled={isLoading} />
+          <CopyButton copyValue={copyValue} isDisabled={isFetching} />
+          <RequeryButton requery={refetch} isDisabled={isFetching} />
         </HStack>
       </AccordionHeaderWrapper>
       <AccordionPanel
@@ -279,7 +286,11 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
               <Then>
                 <If condition={isMobile}>
                   <Then>
-                    <Countdown timeout={cache.timeout} text={web.text.cachePrefix} />
+                    <Countdown
+                      key={dataUpdatedAt}
+                      timeout={cache.timeout}
+                      text={web.text.cachePrefix}
+                    />
                     <Tooltip hasArrow label={cacheLabel} placement="top">
                       <Box>
                         <DynamicIcon icon={{ bs: 'BsLightningFill' }} color={color} />
@@ -292,7 +303,11 @@ const _Result: React.ForwardRefRenderFunction<HTMLDivElement, ResultProps> = (
                         <DynamicIcon icon={{ bs: 'BsLightningFill' }} color={color} />
                       </Box>
                     </Tooltip>
-                    <Countdown timeout={cache.timeout} text={web.text.cachePrefix} />
+                    <Countdown
+                      key={dataUpdatedAt}
+                      timeout={cache.timeout}
+                      text={web.text.cachePrefix}
+                    />
                   </Else>
                 </If>
               </Then>

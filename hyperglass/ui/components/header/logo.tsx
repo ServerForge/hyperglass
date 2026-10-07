@@ -12,7 +12,8 @@ function useLogo(): [string, () => void] {
   const { web } = useConfig();
   const { darkFormat, lightFormat } = web.logo;
 
-  const src = useColorValue(`/images/light${darkFormat}`, `/images/dark${lightFormat}`);
+  // Each logo is copied to `/images/{light,dark}` with its own file extension.
+  const src = useColorValue(`/images/light${lightFormat}`, `/images/dark${darkFormat}`);
 
   // Use the hyperglass logo if the user's logo can't be loaded for whatever reason.
   const [fallback, setSource] = useState<string | null>(null);

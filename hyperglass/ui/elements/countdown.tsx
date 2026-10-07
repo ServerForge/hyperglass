@@ -1,4 +1,5 @@
 import { chakra, Text } from '@chakra-ui/react';
+import { useState } from 'react';
 import ReactCountdown, { zeroPad } from 'react-countdown';
 import { If, Then, Else } from 'react-if';
 import { useColorValue } from '~/hooks';
@@ -39,10 +40,11 @@ const Renderer = (props: RendererProps): JSX.Element => {
 
 export const Countdown = (props: CountdownProps): JSX.Element => {
   const { timeout, text } = props;
-  const then = timeout * 1000;
+  // Fix the end time when mounted, as a new `date` restarts the countdown on every render.
+  const [date] = useState(() => Date.now() + timeout * 1000);
   return (
     <ReactCountdown
-      date={Date.now() + then}
+      date={date}
       daysInHours
       renderer={renderProps => <Renderer {...renderProps} text={text} />}
     />

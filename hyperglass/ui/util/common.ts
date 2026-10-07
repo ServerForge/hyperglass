@@ -29,31 +29,61 @@ export function entries<O, K extends keyof O = keyof O>(obj: O): [K, O[K]][] {
 }
 
 /**
- * Fetch Wrapper that incorporates a timeout via a passed AbortController instance.
+ * Create the error a request is rejected with when it times out.
+ */
+function timeoutError(timeout: number): Error {
+  const error = new Error(`Timeout: no response within ${timeout}ms`);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+/**
+ * Determine if an error is the result of a request timing out or being aborted.
+ */
+export function isTimeoutError(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null | undefined)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
+/**
+ * Fetch wrapper that aborts the request if it doesn't complete within `timeout` milliseconds.
  *
- * Adapted from: https://lowmess.com/blog/fetch-with-timeout
+ * The request is also aborted if `options.signal` is aborted, e.g. by react-query when a query is
+ * cancelled. A request that times out is rejected with an error named `TimeoutError`.
  */
 export async function fetchWithTimeout(
   uri: string,
   // biome-ignore lint/style/useDefaultParameterLast: goal is to match the fetch API as closely as possible.
   options: RequestInit = {},
   timeout: number,
-  controller: AbortController,
 ): Promise<Response> {
-  /**
-   * Lets set up our `AbortController`, and create a request options object that includes the
-   * controller's `signal` to pass to `fetch`.
-   */
-  const { signal = new AbortController().signal, ...allOptions } = options;
-  const config = { ...allOptions, signal };
-  /**
-   * Set a timeout limit for the request using `setTimeout`. If the body of this timeout is
-   * reached before the request is completed, it will be cancelled.
-   */
-  setTimeout(() => {
+  const { signal, ...allOptions } = options;
+  // Each request gets its own controller, so aborting one request never affects another.
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort();
+
+  if (signal?.aborted) {
+    cancel();
+  }
+  signal?.addEventListener('abort', cancel);
+
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
     controller.abort();
   }, timeout);
-  return await fetch(uri, config);
+
+  try {
+    return await fetch(uri, { ...allOptions, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) {
+      throw timeoutError(timeout);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+  }
 }
 
 export function dedupObjectArray<E extends Record<string, unknown>, P extends keyof E = keyof E>(

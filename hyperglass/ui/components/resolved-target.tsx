@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Button, Stack, Text, VStack } from '@chakra-ui/react';
+import { Button, Spinner, Stack, Text, VStack } from '@chakra-ui/react';
 import { useConfig } from '~/context';
 import { DynamicIcon } from '~/elements';
 import { useStrf, useColorValue, useDNSQuery, useFormState } from '~/hooks';
@@ -66,6 +66,8 @@ export const ResolvedTarget = (props: ResolvedTargetProps): JSX.Element => {
     () => (!isError4 || !isError6) && (answer4 || answer6),
     [answer4, answer6, isError4, isError6],
   );
+  // Only show an error once both lookups have finished without an answer.
+  const isResolving = !hasAnswer && (isLoading4 || isLoading6);
   const showA = useMemo(() => !isLoading4 && !isError4 && answer4, [isLoading4, isError4, answer4]);
   const showAAAA = useMemo(
     () => !isLoading6 && !isError6 && answer6,
@@ -84,6 +86,7 @@ export const ResolvedTarget = (props: ResolvedTargetProps): JSX.Element => {
         </Text>
       )}
       <Stack spacing={2}>
+        {isResolving && <Spinner alignSelf="center" color={color} />}
         {showA && (
           <Button
             size="sm"
@@ -112,7 +115,7 @@ export const ResolvedTarget = (props: ResolvedTargetProps): JSX.Element => {
             {answer6}
           </Button>
         )}
-        {!hasAnswer && (
+        {!hasAnswer && !isResolving && (
           <>
             <Text fontSize="sm" textAlign="center" color={errorColor}>
               {errorStart}

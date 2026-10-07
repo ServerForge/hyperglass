@@ -19,8 +19,6 @@ const query: QueryFunction<DnsOverHttps.Response, DNSQueryKey> = async (
 ) => {
   const [url, { target, family }] = ctx.queryKey;
 
-  const controller = new AbortController();
-
   let json = undefined;
   const type = family === 4 ? 'A' : family === 6 ? 'AAAA' : '';
 
@@ -30,9 +28,9 @@ const query: QueryFunction<DnsOverHttps.Response, DNSQueryKey> = async (
       {
         headers: { accept: 'application/dns-json' },
         mode: 'cors',
+        signal: ctx.signal,
       },
       5000,
-      controller,
     );
 
     json = await res.json();
@@ -57,5 +55,7 @@ export function useDNSQuery(
     queryKey: [web.dnsProvider.url, { target, family }],
     queryFn: query,
     cacheTime: cache.timeout * 1000,
+    // The user is waiting on the result, so show a failed lookup rather than retrying it.
+    retry: false,
   });
 }

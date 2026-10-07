@@ -24,11 +24,10 @@ export const useContainerStyle = <Opt extends SingleOption, IsMulti extends bool
 };
 
 export const useControlStyle = <Opt extends SingleOption, IsMulti extends boolean>(
-  props: RSStyleCallbackProps,
+  props: RSStyleCallbackProps & { isError: boolean },
 ): RSStyleFunction<'control', Opt, IsMulti> => {
-  const { colorMode } = props;
-
-  const { isError } = useSelectContext();
+  // `isError` is passed in, as this is called by the component providing the select context.
+  const { colorMode, isError } = props;
 
   const minHeight = useToken('space', 12);
   const borderRadius = useToken('radii', 'md');
@@ -55,7 +54,7 @@ export const useControlStyle = <Opt extends SingleOption, IsMulti extends boolea
           : isFocused
             ? `0 0 0 1px ${focusBorder}`
             : undefined,
-        '&:hover': { borderColor: isFocused ? focusBorder : borderHover },
+        '&:hover': { borderColor: isError ? invalidBorder : isFocused ? focusBorder : borderHover },
         '&:hover > div > span': { backgroundColor: borderHover },
         '&:focus': { borderColor: isError ? invalidBorder : focusBorder },
         '&.invalid': { borderColor: invalidBorder, boxShadow: `0 0 0 1px ${invalidBorder}` },

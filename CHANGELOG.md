@@ -71,6 +71,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `hyperglass setup` deleted logos & avatars in `static/images`, and hid UI build errors.
 - `hyperglass devices`, `directives` & `plugins` searches showed only the first match, or everything when nothing matched, and failed on patterns with braces; error messages containing `[` failed to print.
 - `task docs-platforms` always failed. CI could test a different Python version than intended, and didn't fail when hyperglass failed to start.
+- The UI crashed ("Application error") when an error highlighted a query target containing characters like `(` or `[`.
+- Request timeouts never aborted queries in the UI. Running queries are now cancelled when the form is reset, and DNS-over-HTTPS and "My IP" lookups time out.
+- Failed requests (e.g. a 502 from a reverse proxy, or a timeout) appeared successful in the UI, and were sent 4 times.
+- Location cards (the default location layout for a few devices) couldn't be selected with a keyboard, and result actions weren't labelled buttons. Location cards are now checkboxes, and result actions are labelled buttons.
+- Logos didn't load when the light and dark logos used different file formats.
+- When the selected locations had only one query type in common, it was preselected, but neither shown nor submitted.
+- The DNS lookup prompt showed an error while resolving, and its "Try Again" button reset the form.
+- Requery showed no loading state, and sent a request per click.
+- Result actions were cut off on narrow screens.
+- Location cards stayed highlighted after the form was reset.
+- Select-type targets kept the previous option when switching query types, and options without a name were blank.
+- Empty targets could be submitted, the last result couldn't be collapsed, the page size selector showed the wrong size, the cache countdown restarted, the "no query types in common" message named the wrong locations, required greetings could be dismissed with Esc, footer menus dropped literal braces, and select fields never showed an error border.
+- Pinch-zoom was disabled on mobile devices.
 - [#280](https://github.com/thatmattlove/hyperglass/issues/280): Fix: `condition: None` caused error in directive @Jimmy01240397
 - [#306](https://github.com/thatmattlove/hyperglass/issues/306): Fix: allow integer values in ext_community_list_raw field for Arista BGP - @cooperwinser
 - [#311](https://github.com/thatmattlove/hyperglass/issues/311): Fix: device and directive errors.

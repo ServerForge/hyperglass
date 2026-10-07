@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo } from 'react';
 import { useConfig } from '~/context';
 import { fetchWithTimeout } from '~/util';
 
@@ -31,7 +30,6 @@ export function useLGQuery(
   options: LGQueryOptions = {} as LGQueryOptions,
 ): QueryObserverResult<QueryResponse> {
   const { requestTimeout, cache } = useConfig();
-  const controller = useMemo(() => new AbortController(), []);
 
   const runQuery: QueryFunction<QueryResponse, LGQueryKey> = async (
     ctx: QueryFunctionContext<LGQueryKey>,
@@ -49,25 +47,19 @@ export function useLGQuery(
           queryType,
         }),
         mode: 'cors',
+        // Abort the request when the query is cancelled, e.g. when the form is reset.
+        signal: ctx.signal,
       },
       requestTimeout * 1000,
-      controller,
     );
     try {
       const data = await res.json();
       return data;
     } catch (err) {
-      throw new Error(res.statusText);
+      // e.g. an HTML error page from a reverse proxy. `statusText` is empty over HTTP/2.
+      throw new Error(`${res.status} ${res.statusText}`.trim());
     }
   };
-
-  // Cancel any still-running queries on unmount.
-  useEffect(
-    () => () => {
-      controller.abort();
-    },
-    [controller],
-  );
 
   return useQuery<QueryResponse, Response | QueryResponse | Error, QueryResponse, LGQueryKey>({
     queryKey: ['/api/query', query],
@@ -78,6 +70,8 @@ export function useLGQuery(
     refetchInterval: false,
     // Don't refetch on component remount.
     refetchOnMount: false,
+    // Show failures instead of retrying them, as each attempt runs commands on the device.
+    retry: false,
     ...options,
   });
 }

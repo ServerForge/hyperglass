@@ -106,12 +106,13 @@ export const QueryLocation = (props: QueryLocationProps): JSX.Element => {
    * only sends back the final value.
    */
   const handleSelectChange: SelectOnChange<LocationOption> = (options): void => {
+    // Update the selections first, as they're used to describe the selected locations in errors.
     if (isMultiValue(options)) {
-      onChange({ field: 'queryLocation', value: options.map(o => o.value) });
       setSelection<LocationOption>('queryLocation', options);
+      onChange({ field: 'queryLocation', value: options.map(o => o.value) });
     } else if (isSingleValue(options)) {
-      onChange({ field: 'queryLocation', value: options.value });
       setSelection<LocationOption>('queryLocation', [options]);
+      onChange({ field: 'queryLocation', value: options.value });
     }
   };
 
@@ -121,6 +122,8 @@ export const QueryLocation = (props: QueryLocationProps): JSX.Element => {
         {options.length === 1 ? (
           <Wrap
             p={{ lg: 4 }}
+            role="group"
+            aria-label={label}
             align="flex-start"
             shouldWrapChildren
             spacing={{ base: 4, lg: 8 }}
@@ -133,7 +136,7 @@ export const QueryLocation = (props: QueryLocationProps): JSX.Element => {
                   option={opt}
                   onChange={handleCardChange}
                   hasError={noOverlap}
-                  defaultChecked={form.queryLocation.includes(opt.value)}
+                  isChecked={form.queryLocation.includes(opt.value)}
                 />
               );
             })}
@@ -141,7 +144,7 @@ export const QueryLocation = (props: QueryLocationProps): JSX.Element => {
         ) : (
           <>
             {options.map(group => (
-              <Stack key={group.label} align="center">
+              <Stack key={group.label} align="center" role="group" aria-label={group.label}>
                 <chakra.h3 fontSize={{ base: 'sm', md: 'md' }} alignSelf="flex-start" opacity={0.5}>
                   {group.label}
                 </chakra.h3>
@@ -152,7 +155,7 @@ export const QueryLocation = (props: QueryLocationProps): JSX.Element => {
                       option={opt}
                       onChange={handleCardChange}
                       hasError={noOverlap}
-                      defaultChecked={form.queryLocation.includes(opt.value)}
+                      isChecked={form.queryLocation.includes(opt.value)}
                     />
                   );
                 })}

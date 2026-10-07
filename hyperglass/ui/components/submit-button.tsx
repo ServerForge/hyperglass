@@ -13,7 +13,6 @@ import {
   PopoverTrigger,
 } from '@chakra-ui/react';
 import { forwardRef } from 'react';
-import { useFormContext } from 'react-hook-form';
 import { Else, If, Then } from 'react-if';
 import { ResolvedTarget } from '~/components';
 import { DynamicIcon } from '~/elements';
@@ -102,21 +101,17 @@ const DSubmitButton = (props: ResponsiveSubmitButtonProps): JSX.Element => {
 export const SubmitButton = (props: SubmitButtonProps): JSX.Element => {
   const isMobile = useMobile();
   const loading = useFormState(s => s.loading);
-  const {
-    resolvedIsOpen,
-    resolvedClose,
-    reset: resetForm,
-  } = useFormState(({ resolvedIsOpen, resolvedClose, reset }) => ({
-    resolvedIsOpen,
-    resolvedClose,
-    reset,
-  }));
+  const { resolvedIsOpen, resolvedClose, setLoading } = useFormState(
+    ({ resolvedIsOpen, resolvedClose, setLoading }) => ({
+      resolvedIsOpen,
+      resolvedClose,
+      setLoading,
+    }),
+  );
 
-  const { reset } = useFormContext();
-
-  async function handleClose() {
-    reset();
-    resetForm();
+  // Return to the form with its values intact, e.g. to correct a target that can't be resolved.
+  function handleClose(): void {
+    setLoading(false);
     resolvedClose();
   }
 

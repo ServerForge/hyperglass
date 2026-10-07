@@ -13,12 +13,12 @@ export const CopyButton = (props: CopyButtonProps): JSX.Element => {
   return (
     <Tooltip hasArrow label="Copy Output" placement="top">
       <Button
-        as="a"
         mx={1}
         size="sm"
         variant="ghost"
         onClick={onCopy}
         colorScheme="secondary"
+        aria-label="Copy Output"
         {...rest}
       >
         <DynamicIcon icon={{ fi: hasCopied ? 'FiCheck' : 'FiCopy' }} boxSize="16px" />

@@ -22,10 +22,7 @@ export const Meta = (): JSX.Element => {
       <title key="title">{siteTitle}</title>
       <meta name="url" content={location} />
       <meta name="og:url" content={location} />
-      <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1, user-scalable=no, maximum-scale=1.0, minimum-scale=1.0"
-      />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
     </Head>
   );
 };

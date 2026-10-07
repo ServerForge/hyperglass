@@ -25,7 +25,8 @@ function buildOptions(directive: Nullable<Directive>): OptionWithDescription[] {
   if (directive !== null && isSelectDirective(directive)) {
     return directive.options.map(o => ({
       value: o.value,
-      label: o.name,
+      // An option's name is optional.
+      label: o.name || o.value,
       data: { description: o.description },
     }));
   }
@@ -55,6 +56,12 @@ export const QueryTarget = (props: QueryTargetProps): JSX.Element => {
 
   const options = useMemo(() => buildOptions(directive), [directive]);
   const isSelect = useMemo(() => directive !== null && isSelectDirective(directive), [directive]);
+  // The selected option is controlled by the form state, so it's cleared with the target, e.g.
+  // when the query type changes.
+  const selected = useMemo(
+    () => options.find(o => queryTarget.includes(o.value)) ?? null,
+    [options, queryTarget],
+  );
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>): void {
     setTarget({ display: e.target.value });
@@ -65,6 +72,10 @@ export const QueryTarget = (props: QueryTargetProps): JSX.Element => {
     if (isSingleValue(e)) {
       onChange({ field: name, value: e.value });
       setTarget({ display: e.value });
+    } else {
+      // The selection was cleared.
+      onChange({ field: name, value: [] });
+      setTarget({ display: '' });
     }
   };
 
@@ -78,7 +89,9 @@ export const QueryTarget = (props: QueryTargetProps): JSX.Element => {
       <input {...register('queryTarget')} hidden readOnly value={queryTarget} />
       {isSelect ? (
         <Select<OptionWithDescription, false>
+          key={directive?.id}
           name={name}
+          value={selected}
           options={options}
           components={{ Option }}
           onChange={handleSelectChange}

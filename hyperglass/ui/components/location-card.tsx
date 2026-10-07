@@ -1,14 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo } from 'react';
 import { Flex, Avatar, chakra } from '@chakra-ui/react';
 import { motionChakra } from '~/elements';
 import { useColorValue, useOpposingColor } from '~/hooks';
 
 import type { SingleOption } from '~/types';
-import type { LocationOption } from './query-location';
 
 interface LocationCardProps {
   option: SingleOption;
-  defaultChecked: boolean;
+  isChecked: boolean;
   onChange(a: 'add' | 'remove', v: SingleOption): void;
   hasError: boolean;
 }
@@ -25,21 +24,29 @@ const LocationCardWrapper = motionChakra('div', {
     cursor: 'pointer',
     borderWidth: '1px',
     borderStyle: 'solid',
+    _focusVisible: { outline: 'none', boxShadow: 'outline' },
   },
 });
 
+/**
+ * Location selection card, which behaves like a checkbox. Its checked state is controlled by the
+ * form state, so it stays in sync when the form is changed or reset elsewhere.
+ */
 export const LocationCard = (props: LocationCardProps): JSX.Element => {
-  const { option, onChange, defaultChecked, hasError } = props;
+  const { option, onChange, isChecked, hasError } = props;
   const { label } = option;
-  const [isChecked, setChecked] = useState(defaultChecked);
+  const description = (option.data?.description as string | null | undefined) || null;
+  const descriptionId = useId();
 
-  function handleChange(value: LocationOption) {
-    if (isChecked) {
-      setChecked(false);
-      onChange('remove', value);
-    } else {
-      setChecked(true);
-      onChange('add', value);
+  function handleChange(): void {
+    onChange(isChecked ? 'remove' : 'add', option);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent): void {
+    // Toggle with Space like a checkbox, or with Enter, as the card also looks like a button.
+    if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
+      e.preventDefault();
+      handleChange();
     }
   }
 
@@ -66,11 +73,18 @@ export const LocationCard = (props: LocationCardProps): JSX.Element => {
     <LocationCardWrapper
       bg={bg}
       key={label}
+      role="checkbox"
+      tabIndex={0}
+      aria-label={label}
+      aria-checked={isChecked}
+      aria-invalid={hasError && isChecked}
+      aria-describedby={description !== null ? descriptionId : undefined}
       whileHover={{ scale: 1.05 }}
       borderColor={borderColor}
+      onKeyDown={handleKeyDown}
       onClick={(e: React.MouseEvent) => {
         e.preventDefault();
-        handleChange(option);
+        handleChange();
       }}
     >
       <>
@@ -96,9 +110,9 @@ export const LocationCard = (props: LocationCardProps): JSX.Element => {
           />
         </Flex>
 
-        {option?.data?.description && (
-          <chakra.p mt={2} color={fg} opacity={0.6} fontSize="sm">
-            {option.data.description as string}
+        {description !== null && (
+          <chakra.p id={descriptionId} mt={2} color={fg} opacity={0.6} fontSize="sm">
+            {description}
           </chakra.p>
         )}
       </>

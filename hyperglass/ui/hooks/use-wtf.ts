@@ -47,7 +47,6 @@ function transform(wtf: WtfIsMyIP): WtfIndividual {
 const query: QueryFunction<WtfIndividual, string[]> = async (
   ctx: QueryFunctionContext<string[]>,
 ) => {
-  const controller = new AbortController();
   const [url] = ctx.queryKey;
 
   const res = await fetchWithTimeout(
@@ -55,9 +54,9 @@ const query: QueryFunction<WtfIndividual, string[]> = async (
     {
       headers: { accept: 'application/json' },
       mode: 'cors',
+      signal: ctx.signal,
     },
     5000,
-    controller,
   );
   const data = await res.json();
   return transform(data);
@@ -71,6 +70,8 @@ const common: UseQueryOptions<WtfIndividual, unknown, WtfIndividual, string[]> =
   refetchOnReconnect: false,
   refetchOnWindowFocus: false,
   cacheTime: 120 * 1_000, // 2 minutes
+  // The user is waiting on the result, so show a failed lookup rather than retrying it.
+  retry: false,
 };
 
 export function useWtf(): Wtf {
@@ -84,8 +85,7 @@ export function useWtf(): Wtf {
   });
 
   async function refetch(): Promise<void> {
-    await ipv4.refetch();
-    await ipv6.refetch();
+    await Promise.all([ipv4.refetch(), ipv6.refetch()]);
   }
   return [ipv4, ipv6, refetch];
 }

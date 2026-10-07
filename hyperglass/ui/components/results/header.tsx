@@ -47,7 +47,7 @@ export const ResultHeader = (props: ResultHeaderProps): JSX.Element => {
         bg={isError ? warning : defaultStatus}
         color={color}
       >
-        <Box boxSize={6}>
+        <Box boxSize={6} flexShrink={0}>
           {loading ? (
             <Spinner size="sm" mr={4} color={status} />
           ) : (
@@ -61,7 +61,9 @@ export const ResultHeader = (props: ResultHeaderProps): JSX.Element => {
         </Box>
       </Tooltip>
 
-      <Text fontSize="lg">{title}</Text>
+      <Text fontSize="lg" noOfLines={1} title={title} textAlign="left">
+        {title}
+      </Text>
       <AccordionIcon ml="auto" />
     </HStack>
   );

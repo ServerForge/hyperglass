@@ -1,5 +1,14 @@
-import { describe, expect, it, test } from 'vitest';
-import { all, andJoin, chunkArray, dedupObjectArray, entries, isFQDN } from './common';
+import { afterEach, beforeEach, describe, expect, it, test, vi } from 'vitest';
+import {
+  all,
+  andJoin,
+  chunkArray,
+  dedupObjectArray,
+  entries,
+  fetchWithTimeout,
+  isFQDN,
+  isTimeoutError,
+} from './common';
 
 test('all - all items are truthy', () => {
   // biome-ignore lint/suspicious/noSelfCompare: because this is a test, duh
@@ -96,5 +105,96 @@ describe('isFQDN - determine if a string is an FQDN pattern', () => {
   });
   it('is an array of FQDNs and should be true', () => {
     expect(isFQDN(['www.example.com'])).toBe(true);
+  });
+});
+
+describe('fetchWithTimeout - fetch with a timeout & cancellation', () => {
+  /** A `fetch` that never responds, and rejects like `fetch` when its signal is aborted. */
+  const pendingFetch = vi.fn(
+    (_: string, init: RequestInit = {}) =>
+      new Promise<Response>((_resolve, reject) => {
+        const abort = () => reject(new DOMException('The operation was aborted.', 'AbortError'));
+        if (init.signal?.aborted) {
+          abort();
+        }
+        init.signal?.addEventListener('abort', abort);
+      }),
+  );
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    pendingFetch.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns the response and clears its timer', async () => {
+    const response = new Response('ok');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response),
+    );
+    await expect(fetchWithTimeout('/api/query', {}, 1000)).resolves.toBe(response);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('aborts the request and rejects with a TimeoutError when the timeout expires', async () => {
+    vi.stubGlobal('fetch', pendingFetch);
+    const result = fetchWithTimeout('/api/query', {}, 1000);
+    const assertion = expect(result).rejects.toMatchObject({ name: 'TimeoutError' });
+    vi.advanceTimersByTime(999);
+    expect(pendingFetch.mock.calls[0][1]?.signal?.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+    await assertion;
+    expect(pendingFetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+
+  it('aborts the request when the passed signal is aborted', async () => {
+    vi.stubGlobal('fetch', pendingFetch);
+    const controller = new AbortController();
+    const result = fetchWithTimeout('/api/query', { signal: controller.signal }, 1000);
+    const assertion = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await assertion;
+    expect(pendingFetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('aborts the request if the passed signal is already aborted', async () => {
+    vi.stubGlobal('fetch', pendingFetch);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      fetchWithTimeout('/api/query', { signal: controller.signal }, 1000),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(pendingFetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+
+  it('uses a new signal for each request', async () => {
+    vi.stubGlobal('fetch', pendingFetch);
+    const first = fetchWithTimeout('/one', {}, 1000);
+    const assertion = expect(first).rejects.toMatchObject({ name: 'TimeoutError' });
+    vi.advanceTimersByTime(1000);
+    await assertion;
+    fetchWithTimeout('/two', {}, 1000).catch(() => null);
+    expect(pendingFetch.mock.calls[1][1]?.signal?.aborted).toBe(false);
+  });
+});
+
+describe('isTimeoutError - determine if a request timed out or was aborted', () => {
+  it('is a timeout', () => {
+    const error = new Error('Timeout');
+    error.name = 'TimeoutError';
+    expect(isTimeoutError(error)).toBe(true);
+    expect(isTimeoutError(new DOMException('Aborted', 'AbortError'))).toBe(true);
+  });
+  it("isn't a timeout", () => {
+    expect(isTimeoutError(new Error('Bad Gateway'))).toBe(false);
+    expect(isTimeoutError(new TypeError('Failed to fetch'))).toBe(false);
+    expect(isTimeoutError(null)).toBe(false);
+    expect(isTimeoutError(undefined)).toBe(false);
   });
 });

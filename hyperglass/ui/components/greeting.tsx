@@ -38,8 +38,9 @@ export const Greeting = (props: ModalContentProps): JSX.Element => {
       onClose={() => ack(false, web.greeting.required)}
       isOpen={isOpen}
       motionPreset="slideInBottom"
-      closeOnEsc={web.greeting.required}
-      closeOnOverlayClick={web.greeting.required}
+      // A required greeting can only be closed by acknowledging it.
+      closeOnEsc={!web.greeting.required}
+      closeOnOverlayClick={!web.greeting.required}
     >
       <ModalOverlay />
       <ModalContent

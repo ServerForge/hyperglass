@@ -109,7 +109,7 @@ type _DirectiveBase = {
 };
 
 type _DirectiveOption = {
-  name: string;
+  name: string | null;
   value: string;
   description: string | null;
 };

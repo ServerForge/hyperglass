@@ -130,7 +130,7 @@ export const LookingGlassForm = (): JSX.Element => {
   }
 
   const handleLocChange = (locations: string[]) =>
-    locationChange(locations, { setError, clearErrors, getDevice, text: web.text });
+    locationChange(locations, { setError, clearErrors, setValue, getDevice, text: web.text });
 
   function handleChange(e: OnChangeArgs): void {
     // Signal the field & value to react-hook-form.
@@ -145,22 +145,19 @@ export const LookingGlassForm = (): JSX.Element => {
     } else if (e.field === 'queryType' && isString(e.value)) {
       setValue('queryType', e.value);
       setFormValue('queryType', e.value);
-      if (form.queryTarget.length !== 0) {
+      if (e.value !== form.queryType && form.queryTarget.length !== 0) {
         // Reset queryTarget as well, so that, for example, selecting BGP Community, and selecting
         // a community, then changing the queryType to BGP Route doesn't preserve the selected
         // community as the queryTarget.
         setFormValue('queryTarget', []);
+        setValue('queryTarget', []);
         setTarget({ display: '' });
       }
     } else if (e.field === 'queryTarget') {
-      if (isString(e.value)) {
-        setFormValue('queryTarget', [e.value]);
-        setValue('queryTarget', [e.value]);
-      }
-      if (Array.isArray(e.value)) {
-        setFormValue('queryTarget', e.value);
-        setValue('queryTarget', e.value);
-      }
+      // Exclude empty values (e.g. a cleared input), so an empty target can't be submitted.
+      const targets = (isString(e.value) ? [e.value] : e.value).filter(t => t.trim() !== '');
+      setFormValue('queryTarget', targets);
+      setValue('queryTarget', targets);
     }
   }
 
