@@ -6,6 +6,7 @@
 
 # Standard Library
 import re
+import json
 import typing as t
 import asyncio
 from ipaddress import IPv4Address, IPv6Address, ip_address
@@ -14,9 +15,17 @@ from ipaddress import IPv4Address, IPv6Address, ip_address
 from hyperglass.log import log
 from hyperglass.state import use_state
 
+if t.TYPE_CHECKING:
+    # Project
+    from hyperglass.state.redis import RedisManager
+
 DEFAULT_KEYS = ("asn", "ip", "prefix", "country", "rir", "allocated", "org")
 
 CACHE_KEY = "hyperglass.external.bgptools"
+# Seconds network info is cached.
+CACHE_TIMEOUT = 86400
+# Seconds to wait for a response from bgp.tools.
+WHOIS_TIMEOUT = 10
 
 TargetDetail = t.TypedDict(
     "TargetDetail",
@@ -76,8 +85,10 @@ def parse_whois(output: str, targets: t.List[str]) -> TargetDetail:
     def lines(raw):
         """Generate clean string values for each column."""
         for r in (r for r in raw.split("\n") if r):
-            fields = (re.sub(r"(\n|\r)", "", field).strip(" ") for field in r.split("|"))
-            yield fields
+            fields = tuple(re.sub(r"(\n|\r)", "", field).strip(" ") for field in r.split("|"))
+            # Skip lines that aren't results, e.g. errors.
+            if len(fields) == len(DEFAULT_KEYS):
+                yield fields
 
     data = {}
 
@@ -107,28 +118,30 @@ async def run_whois(targets: t.List[str]) -> str:
     # Construct bulk query
     query = "\n".join(("begin", *targets, "end\n")).encode()
 
-    # Open the socket to bgp.tools
-    log.debug("Opening connection to bgp.tools")
-    reader, writer = await asyncio.open_connection("bgp.tools", port=43)
+    async def whois() -> bytes:
+        # Open the socket to bgp.tools
+        log.debug("Opening connection to bgp.tools")
+        reader, writer = await asyncio.open_connection("bgp.tools", port=43)
+        try:
+            # Send the query
+            writer.write(query)
+            if writer.can_write_eof():
+                writer.write_eof()
+            await writer.drain()
 
-    # Send the query
-    writer.write(query)
-    if writer.can_write_eof():
-        writer.write_eof()
-    await writer.drain()
-
-    # Read the response
-    response = b""
-    while True:
-        data = await reader.read(128)
-        if data:
-            response += data
-        else:
+            # Read the response
+            return await reader.read()
+        finally:
             log.debug("Closing connection to bgp.tools")
             writer.close()
-            break
 
+    response = await asyncio.wait_for(whois(), timeout=WHOIS_TIMEOUT)
     return response.decode()
+
+
+def _cache_name(cache: "RedisManager", target: str) -> str:
+    """Get a target's cache key. Addresses aren't split on `.`, unlike `RedisManager.key()`."""
+    return f"{cache.key(CACHE_KEY)}:{target}"
 
 
 async def network_info(*targets: str) -> TargetData:
@@ -141,14 +154,19 @@ async def network_info(*targets: str) -> TargetData:
     # Set default data structure.
     query_data = {t: dict.fromkeys(DEFAULT_KEYS, "") for t in query_targets}
 
-    # Get all cached bgp.tools data.
-    cached = cache.get_map(CACHE_KEY) or {}
+    # Get cached bgp.tools data for each of the items in the list of resources.
+    cached = {}
+    if query_targets:
+        names = [_cache_name(cache, target) for target in query_targets]
+        cached = {
+            target: json.loads(value)
+            for target, value in zip(query_targets, cache.instance.mget(names))
+            if value is not None
+        }
 
-    # Try to use cached data for each of the items in the list of
-    # resources.
-    for target in (target for target in query_targets if target in cached):
+    for target, data in cached.items():
         # Reassign the cached network info to the matching resource.
-        query_data[target] = cached[target]
+        query_data[target] = data
         log.bind(target=target).debug("Using cached network info")
 
     # Remove cached items from the resource list so they're not queried.
@@ -160,15 +178,18 @@ async def network_info(*targets: str) -> TargetData:
 
             if whoisdata:
                 # If the response is not empty, parse it.
-                query_data.update(parse_whois(whoisdata, targets))
+                parsed = parse_whois(whoisdata, targets)
+                query_data.update(parsed)
 
                 # Cache the response
-                for target in targets:
-                    cache.set_map_item(CACHE_KEY, target, query_data[target])
-                    log.bind(target=t).debug("Cached network info")
+                with cache.instance.pipeline() as pipeline:
+                    for target, data in parsed.items():
+                        pipeline.set(_cache_name(cache, target), json.dumps(data), ex=CACHE_TIMEOUT)
+                        log.bind(target=target).debug("Cached network info")
+                    pipeline.execute()
 
     except Exception as err:
-        log.error(err)
+        log.bind(error=repr(err)).error("Failed to get network info from bgp.tools")
 
     return {**default_data, **query_data}
 

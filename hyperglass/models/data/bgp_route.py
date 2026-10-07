@@ -6,11 +6,11 @@ import typing as t
 from ipaddress import ip_network
 
 # Third Party
-from pydantic import ValidationInfo, field_validator
+from pydantic import field_validator
 
 # Project
 from hyperglass.state import use_state
-from hyperglass.external.rpki import rpki_state
+from hyperglass.external.rpki import rpki_states
 
 # Local
 from ..main import HyperglassModel
@@ -50,7 +50,7 @@ class BGPRoute(HyperglassModel):
             """Only allow matching patterns."""
             valid = False
             for pattern in structured.communities.items:
-                if re.match(pattern, comm):
+                if re.fullmatch(pattern, comm):
                     valid = True
                     break
             return valid
@@ -59,7 +59,7 @@ class BGPRoute(HyperglassModel):
             """Allow any except matching patterns."""
             valid = True
             for pattern in structured.communities.items:
-                if re.match(pattern, comm):
+                if re.fullmatch(pattern, comm):
                     valid = False
                     break
             return valid
@@ -68,39 +68,6 @@ class BGPRoute(HyperglassModel):
         func = func_map[structured.communities.mode]
 
         return [c for c in value if func(c)]
-
-    @field_validator("rpki_state")
-    def validate_rpki_state(cls, value, info: ValidationInfo):
-        """If external RPKI validation is enabled, get validation state."""
-
-        (structured := use_state("params").structured)
-
-        if structured.rpki.mode == "router":
-            # If router validation is enabled, return the value as-is.
-            return value
-
-        if structured.rpki.mode == "external":
-            # If external validation is enabled, validate the prefix
-            # & asn with Cloudflare's RPKI API.
-            as_path = info.data.get("as_path", [])
-
-            if len(as_path) == 0:
-                # If the AS_PATH length is 0, i.e. for an internal route,
-                # return RPKI Unknown state.
-                return 3
-            # Get last ASN in path
-            asn = as_path[-1]
-
-        try:
-            net = ip_network(info.data["prefix"])
-        except ValueError:
-            return 3
-
-        # Only do external RPKI lookups for global prefixes.
-        if net.is_global:
-            return rpki_state(prefix=info.data["prefix"], asn=asn)
-
-        return value
 
 
 class BGPRouteTable(HyperglassModel):
@@ -115,6 +82,35 @@ class BGPRouteTable(HyperglassModel):
         """Sort routes by prefix after validation."""
         super().__init__(**kwargs)
         self.routes = sorted(self.routes, key=lambda r: r.prefix)
+
+        if use_state("params").structured.rpki.mode == "external":
+            self.validate_rpki_states()
+
+    def validate_rpki_states(self) -> None:
+        """Get routes' RPKI states from Cloudflare's RPKI API, in a single request.
+
+        Routes with non-global prefixes keep the RPKI state reported by the router.
+        """
+        external = []
+        for route in self.routes:
+            if len(route.as_path) == 0:
+                # If the AS_PATH length is 0, i.e. for an internal route,
+                # return RPKI Unknown state.
+                route.rpki_state = 3
+                continue
+            try:
+                net = ip_network(route.prefix)
+            except ValueError:
+                route.rpki_state = 3
+                continue
+            # Only do external RPKI lookups for global prefixes.
+            if net.is_global:
+                external.append(route)
+
+        # Validate the prefix & last ASN in the path, i.e. the origin ASN.
+        states = rpki_states([(route.prefix, route.as_path[-1]) for route in external])
+        for route, state in zip(external, states):
+            route.rpki_state = state
 
     def __add__(self: "BGPRouteTable", other: "BGPRouteTable") -> "BGPRouteTable":
         """Merge another BGP table instance with this instance."""

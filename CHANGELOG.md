@@ -10,8 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Query targets are now restricted to characters used by IP prefixes, BGP communities and AS path expressions, and `|` is only accepted as regex alternation (directly followed by a digit, `_`, `^` or `[`). Previously, crafted BGP community/AS path queries (or IPv6 zone IDs, e.g. `2001:db8::1%x"; id; "`) could inject commands into the device CLI, or into a shell on FRR, BIRD, OpenBGPD and TNSR. OpenBGPD AS path & community commands now also quote the query target.
 - **Behavior change:** regex `condition` patterns on directive `permit` rules now must match the entire query target (`re.fullmatch`) instead of only its beginning. `deny` rules still match the beginning of the query target.
 - A directive `deny` rule could be bypassed by querying a list of targets in which the denied value wasn't first.
-- Error responses no longer include internal details passed to error messages, such as an SSH proxy's address and username.
+- Error responses no longer include internal details passed to error messages, such as an SSH proxy's address and username, or an HTTP device's request URL, whose query string may contain credentials.
 - The Redis password is no longer shown in logs or by `hyperglass settings`.
+- Webhooks now identify the client by its connection (or a trusted proxy's `X-Forwarded-For`, see `HYPERGLASS_TRUSTED_PROXIES`), instead of request headers any client could set. Slack webhook messages escape request values, so e.g. a User-Agent of `<!channel>` can't notify a channel.
 - Upgraded dependencies with known vulnerabilities (Litestar, paramiko, cryptography, Jinja2, h11, idna, Next.js and others). Removed the unused `PyJWT`, `distro` and `aiofiles` dependencies, plus unused frontend ESLint/Prettier tooling.
 
 ### Changed
@@ -44,6 +45,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Docker images included the local UI build output (several GB in a development checkout), Python caches and git history from the build context.
 - Console log messages containing braces were dropped.
 - Device connection errors (HTTP devices, SSH proxies) and errors containing braces (e.g. Junos `{master}`) caused a generic HTTP 500 error, and error messages could end with "(None)".
+- Webhooks (generic, Slack and Microsoft Teams) were never sent. Webhooks now use the configured URL (including its port and query string), headers, authentication, timeout and `verify_ssl`, and `logging.http.enable: false` is respected.
+- A blocking connection test before external HTTP requests (webhooks, RPKI, bgp.tools) stalled hyperglass when an endpoint was unreachable, and failed for any port other than 443.
+- External RPKI validation blocked the web server and had no timeout, costing ~10 seconds per route when the validator was unreachable. Routes are now validated in batches rather than one request per route, with a 10 second timeout, within the request timeout. Results are cached for an hour (failures for a minute), and lookups pause for a minute when the validator is unreachable.
+- bgp.tools lookups had no timeout, and their results were never cached.
+- SSH proxy connection & authentication failures caused a generic error, and connecting to the proxy blocked the web server. SSH tunnels weren't closed if starting them failed or took longer than the request timeout.
+- HTTP devices: query templates using field names (e.g. `{query_target}`) or other braces failed; `verify_ssl`, `ssl_ca` and `ssl_client` were ignored; the device's `port` was ignored; IPv6 addresses didn't work; and unreachable devices caused a generic error.
+- Queries with only blank output returned an empty response instead of the "no output" message.
+- Structured output community filters matched by prefix, e.g. `65000:2345` also matched `65000:23456`.
 - OpenGraph image generation crashed or deleted files (if the source image was named `opengraph.jpg`, was in `static/images`, or was named like a logo), failed for palette & 16-bit images, and turned transparent areas white. A device avatar in `static/images` crashed startup.
 - Errors in a Python configuration file's `main()` function were ignored, so hyperglass started with its default configuration.
 - Malformed configuration (e.g. invalid colors, empty or mapping-shaped `devices`, list-shaped directives, an empty `config.json`, a proxy with an unsupported platform) raised internal errors instead of validation errors with file & field context.

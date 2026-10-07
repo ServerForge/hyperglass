@@ -10,50 +10,105 @@ from hyperglass.external._base import BaseExternal
 
 if t.TYPE_CHECKING:
     # Standard Library
-    from ipaddress import IPv4Address, IPv6Address
+    from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network
+
+    # Project
+    from hyperglass.state.redis import RedisManager
+
+    Prefix = t.Union[IPv4Address, IPv6Address, IPv4Network, IPv6Network, str]
 
 RPKI_STATE_MAP = {"Invalid": 0, "Valid": 1, "NotFound": 2, "DEFAULT": 3}
 RPKI_NAME_MAP = {v: k for k, v in RPKI_STATE_MAP.items()}
 CACHE_KEY = "hyperglass.external.rpki"
+# Seconds a validation state is cached.
+CACHE_TIMEOUT = 3600
+# Seconds a failed lookup is cached. If the validator can't be reached, lookups are skipped for
+# this long, so its timeout isn't added to every query (or every route).
+FAILURE_TIMEOUT = 60
+# Seconds to wait for the validator (once per batch of routes), as for other external requests.
+REQUEST_TIMEOUT = 10
+# Maximum number of routes validated per request.
+BATCH_SIZE = 100
 
 
-def rpki_state(prefix: t.Union["IPv4Address", "IPv6Address", str], asn: t.Union[int, str]) -> int:
-    """Get RPKI state and map to expected integer."""
-    _log = log.bind(prefix=prefix, asn=asn)
-    _log.debug("Validating RPKI State")
+def _cache_name(cache: "RedisManager", item: str) -> str:
+    """Get an item's cache key. Prefixes aren't split on `.`, unlike `RedisManager.key()`."""
+    return f"{cache.key(CACHE_KEY)}:{item}"
+
+
+def _validate(routes: t.Sequence[t.Tuple[str, int]]) -> t.List[t.Optional[int]]:
+    """Get the RPKI state of each route in a single request, or `None` if one is missing."""
+    fields = " ".join(
+        f'r{i}: validation(prefix: "{prefix}", asn: {asn}) {{ state }}'
+        for i, (prefix, asn) in enumerate(routes)
+    )
+    query = f"query GetValidation {{ {fields} }}"
+    log.bind(query=query).debug("Cloudflare RPKI GraphQL Query")
+
+    with BaseExternal(base_url="https://rpki.cloudflare.com", timeout=REQUEST_TIMEOUT) as client:
+        response = client._post("/api/graphql", data={"query": query})
+
+    data = response.get("data") if isinstance(response, dict) else None
+    if not isinstance(data, dict):
+        raise ValueError(f"Unexpected response from Cloudflare: {response!r}")
+
+    states = []
+    for i, (prefix, asn) in enumerate(routes):
+        state = (data.get(f"r{i}") or {}).get("state")
+        if state not in RPKI_STATE_MAP:
+            log.bind(prefix=prefix, asn=asn, result=data.get(f"r{i}")).error(
+                "Response from Cloudflare missing state"
+            )
+        states.append(RPKI_STATE_MAP.get(state))
+    return states
+
+
+def rpki_states(routes: t.Sequence[t.Tuple["Prefix", t.Union[int, str]]]) -> t.List[int]:
+    """Get the RPKI state of each (prefix, origin ASN) pair, mapped to the expected integer."""
+    routes = [(str(prefix), int(asn)) for prefix, asn in routes]
+    if not routes:
+        return []
 
     cache = use_state("cache")
+    names = [_cache_name(cache, f"{prefix}@{asn}") for prefix, asn in routes]
+    unavailable = _cache_name(cache, "unavailable")
 
-    state = 3
-    ro = f"{prefix!s}@{asn!s}"
+    states = {}
+    for route, cached in zip(routes, cache.instance.mget(names)):
+        if cached is not None:
+            states[route] = int(cached)
 
-    cached = cache.get_map(CACHE_KEY, ro)
+    missing = list(dict.fromkeys(r for r in routes if r not in states))
 
-    if cached is not None:
-        state = cached
-    else:
-        ql = 'query GetValidation {{ validation(prefix: "{}", asn: {}) {{ state }} }}'
-        query = ql.format(prefix, asn)
-        _log.bind(query=query).debug("Cloudflare RPKI GraphQL Query")
+    if missing and cache.instance.exists(unavailable):
+        log.bind(routes=len(missing)).debug("Skipping RPKI validation, validator is unavailable")
+        missing = []
+
+    for i in range(0, len(missing), BATCH_SIZE):
+        batch = missing[i : i + BATCH_SIZE]
         try:
-            with BaseExternal(base_url="https://rpki.cloudflare.com") as client:
-                response = client._post("/api/graphql", data={"query": query})
-            try:
-                validation_state = response["data"]["validation"]["state"]
-            except KeyError as missing:
-                _log.error("Response from Cloudflare missing key '{}': {!r}", missing, response)
-                validation_state = 3
-
-            state = RPKI_STATE_MAP[validation_state]
-            cache.set_map_item(CACHE_KEY, ro, state)
+            results = _validate(batch)
         except Exception as err:
-            log.error(err)
-            # Don't cache the state when an error produced it.
-            state = 3
+            log.bind(error=str(err)).error("Unable to validate RPKI state")
+            # Don't try again until the validator might be available again.
+            cache.instance.set(unavailable, 1, ex=FAILURE_TIMEOUT)
+            break
 
-    msg = "RPKI Validation State for {} via AS{} is {}".format(prefix, asn, RPKI_NAME_MAP[state])
-    if cached is not None:
-        msg += " [CACHED]"
+        with cache.instance.pipeline() as pipeline:
+            for (prefix, asn), state in zip(batch, results):
+                # Cache failed lookups too, but not for as long.
+                timeout = FAILURE_TIMEOUT if state is None else CACHE_TIMEOUT
+                state = 3 if state is None else state
+                states[(prefix, asn)] = state
+                pipeline.set(_cache_name(cache, f"{prefix}@{asn}"), state, ex=timeout)
+            pipeline.execute()
 
-    log.debug(msg)
-    return state
+    result = [states.get(route, 3) for route in routes]
+    for (prefix, asn), state in zip(routes, result):
+        log.debug("RPKI Validation State for {} via AS{} is {}", prefix, asn, RPKI_NAME_MAP[state])
+    return result
+
+
+def rpki_state(prefix: "Prefix", asn: t.Union[int, str]) -> int:
+    """Get RPKI state and map to expected integer."""
+    return rpki_states([(prefix, asn)])[0]

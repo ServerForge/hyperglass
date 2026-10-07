@@ -1,7 +1,9 @@
 """Configuration models for hyperglass http client."""
 
 # Standard Library
+import ssl
 import typing as t
+from ipaddress import ip_address
 
 # Third Party
 import httpx
@@ -86,15 +88,27 @@ class HttpConfiguration(HyperglassModel):
             query_target=self.attribute_map.query_target or "query_target",
         )
 
+    def ssl_context(self) -> ssl.SSLContext:
+        """Create an SSL context for verification & client certificate authentication."""
+        if not self.verify_ssl:
+            context = httpx.create_ssl_context(verify=False)
+        elif self.ssl_ca is not None:
+            # Use the CA certificates for SSL verification.
+            context = ssl.create_default_context(cafile=str(self.ssl_ca))
+        else:
+            context = httpx.create_ssl_context()
+
+        # Use client certificate authentication, if defined.
+        if self.ssl_client is not None:
+            context.load_cert_chain(str(self.ssl_client))
+        return context
+
     def create_client(self, *, device: "Device") -> httpx.AsyncClient:
         """Create a pre-configured http client."""
 
-        # Use the CA certificates for SSL verification, if present.
-        verify = self.verify_ssl
-        if self.ssl_ca is not None:
-            verify = httpx.create_ssl_context(verify=str(self.ssl_ca))
-
-        transport_constructor = {"retries": self.retries}
+        # SSL is configured on the transport, as a client ignores its own SSL settings (`verify` &
+        # `cert`) when a transport is provided.
+        transport_constructor = {"retries": self.retries, "verify": self.ssl_context()}
 
         # Use `source` IP address as httpx transport's `local_address`, if defined.
         if self.source is not None:
@@ -102,23 +116,26 @@ class HttpConfiguration(HyperglassModel):
 
         transport = httpx.AsyncHTTPTransport(**transport_constructor)
 
+        host = str(device.address)
+        try:
+            if ip_address(host).version == 6:
+                host = f"[{host}]"
+        except ValueError:
+            # Hostname
+            pass
+
         # Add the port to the URL only if it is not 22, 80, or 443.
-        base_url = f"{self.scheme}://{device.address!s}".strip("/")
+        base_url = f"{self.scheme}://{host}"
         if device.port not in (22, 80, 443):
             base_url += f":{device.port!s}"
 
         parameters = {
-            "verify": verify,
             "transport": transport,
             "timeout": self.timeout,
             "follow_redirects": self.follow_redirects,
-            "base_url": f"{self.scheme}://{device.address!s}".strip("/"),
+            "base_url": base_url,
             "headers": {"user-agent": f"hyperglass/{__version__}", **self.headers},
         }
-
-        # Use client certificate authentication, if defined.
-        if self.ssl_client is not None:
-            parameters["cert"] = str(self.ssl_client)
 
         # Use basic authentication, if defined.
         if self.basic_auth is not None:

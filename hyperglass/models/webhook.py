@@ -22,6 +22,11 @@ def to_snake_case(value: str) -> str:
     return value.replace("_", "-")
 
 
+def slack_escape(value: t.Any) -> str:
+    """Escape Slack control characters, so values can't mention users or channels, e.g. `<!channel>`."""
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 class WebhookHeaders(HyperglassModel):
     """Webhook data model."""
 
@@ -58,11 +63,12 @@ class Webhook(HyperglassModel):
     timestamp: datetime
 
     @model_validator(mode="before")
-    def validate_webhook(cls, model: "Webhook") -> "Webhook":
+    @classmethod
+    def validate_webhook(cls, data: t.Any) -> t.Any:
         """Reset network attributes if the source is localhost."""
-        if model.source in ("127.0.0.1", "::1"):
-            model.network = {}
-        return model
+        if isinstance(data, dict) and data.get("source") in ("127.0.0.1", "::1"):
+            data = {**data, "network": {}}
+        return data
 
     def msteams(self) -> t.Dict[str, t.Any]:
         """Format the webhook data as a Microsoft Teams card."""
@@ -116,6 +122,8 @@ class Webhook(HyperglassModel):
         """Format the webhook data as a Slack message."""
 
         def make_field(key, value, code=False):
+            # Values are from the request (e.g. headers), so escape them.
+            value = slack_escape(value)
             if code:
                 value = f"`{value}`"
             return f"*{key}*\n{value}"

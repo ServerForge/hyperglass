@@ -42,15 +42,12 @@ async def send_webhook(
 ) -> t.NoReturn:
     """If webhooks are enabled, get request info and send a webhook."""
     try:
-        if params.logging.http is not None:
+        if params.logging.http is not None and params.logging.http.enable:
             headers = await process_headers(headers=request.headers)
 
-            if headers.get("x-real-ip") is not None:
-                host = headers["x-real-ip"]
-            elif headers.get("x-forwarded-for") is not None:
-                host = headers["x-forwarded-for"]
-            else:
-                host = request.client.host
+            # The client's address is taken from `X-Forwarded-For` only if the request is from a
+            # trusted proxy (`HYPERGLASS_TRUSTED_PROXIES`); otherwise, any client could set it.
+            host = request.client.host
 
             network_info = await bgptools.network_info(host)
 

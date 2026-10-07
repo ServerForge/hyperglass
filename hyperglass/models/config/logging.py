@@ -7,9 +7,6 @@ from pathlib import Path
 # Third Party
 from pydantic import ByteSize, SecretStr, AnyHttpUrl, DirectoryPath, field_validator
 
-# Project
-from hyperglass.constants import __version__
-
 # Local
 from ..main import HyperglassModel
 from ..fields import LogFormat, HttpAuthMode, HttpProvider
@@ -37,7 +34,7 @@ class HttpAuth(HyperglassModel):
 
     def basic(self):
         """Represent HTTP basic authentication."""
-        return (self.username, self.password.get_secret_value())
+        return (self.username or "", self.password.get_secret_value())
 
 
 class Http(HyperglassModel, extra="allow"):
@@ -59,23 +56,6 @@ class Http(HyperglassModel, extra="allow"):
             if not isinstance(v, str):
                 value[k] = str(v)
         return value
-
-    def __init__(self, **kwargs):
-        """Initialize model, add obfuscated connection details as attribute."""
-        super().__init__(**kwargs)
-        dumped = {
-            "headers": self.headers,
-            "params": self.params,
-            "verify": self.verify_ssl,
-            "timeout": self.timeout,
-        }
-        dumped["headers"].update({"user-agent": f"hyperglass/{__version__}"})
-
-        if self.authentication is not None:
-            if self.authentication.mode == "api_key":
-                dumped["headers"].update(self.authentication.api_key())
-            else:
-                dumped["auth"] = self.authentication.basic()
 
 
 class Logging(HyperglassModel):

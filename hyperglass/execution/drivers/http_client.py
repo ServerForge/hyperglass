@@ -7,7 +7,7 @@ import typing as t
 import httpx
 
 # Project
-from hyperglass.util import get_fmt_keys
+from hyperglass.util import replace_placeholders
 from hyperglass.exceptions.public import AuthError, RestError, DeviceTimeout, ResponseEmpty
 
 # Local
@@ -18,6 +18,19 @@ if t.TYPE_CHECKING:
     from hyperglass.models.api import Query
     from hyperglass.models.config.devices import Device
     from hyperglass.models.config.http_client import HttpConfiguration
+
+
+def error_text(error: httpx.HTTPError) -> str:
+    """Describe an HTTP error for users, without the URL's query, which may contain secrets."""
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"{error.response.status_code} {error.response.reason_phrase}".strip()
+    text = str(error) or type(error).__name__
+    try:
+        url = error.request.url
+    except RuntimeError:
+        # The error isn't associated with a request.
+        return text
+    return text.replace(str(url), str(url.copy_with(query=None)))
 
 
 class HttpClient(Connection):
@@ -44,14 +57,15 @@ class HttpClient(Connection):
                 self.config._attribute_map.query_type: self.query_data.query_type,
             }
         if isinstance(self.config.query, t.Dict):
+            # Values may reference query fields by name (e.g. `{query_target}`), or by the name
+            # they're mapped to in `attribute_map`.
+            attribute_map = self.config._attribute_map.model_dump()
+            fields = {k: str(getattr(self.query_data, k)) for k in attribute_map}
+            fields.update({mapped: fields[k] for k, mapped in attribute_map.items()})
+
+            # Other text, e.g. braces in JSON or unknown placeholders, is kept as-is.
             return {
-                key: value.format(
-                    **{
-                        str(v): str(getattr(self.query_data, k, None))
-                        for k, v in self.config.attribute_map.model_dump().items()
-                        if v in get_fmt_keys(value)
-                    }
-                )
+                key: replace_placeholders(value, **fields) if isinstance(value, str) else value
                 for key, value in self.config.query.items()
             }
         return {}
@@ -112,6 +126,10 @@ class HttpClient(Connection):
 
             except httpx.HTTPStatusError as error:
                 if error.response.status_code == 401:
-                    raise AuthError(error=error, device=self.device) from error
-                raise RestError(error=error, device=self.device) from error
+                    raise AuthError(error=error_text(error), device=self.device) from error
+                raise RestError(error=error_text(error), device=self.device) from error
+
+            except httpx.HTTPError as error:
+                # E.g. the device is unreachable or refuses the connection.
+                raise RestError(error=error_text(error), device=self.device) from error
             return responses

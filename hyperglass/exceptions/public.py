@@ -1,7 +1,7 @@
 """User-facing/Public exceptions."""
 
 # Standard Library
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Union, Optional
 
 # Local
 from ._common import PublicHyperglassError
@@ -28,7 +28,7 @@ class ScrapeError(
 ):
     """Raised when an SSH driver error occurs."""
 
-    def __init__(self, *, error: BaseException, device: "Device"):
+    def __init__(self, *, error: Union[BaseException, str], device: "Device"):
         """Initialize parent error."""
         super().__init__(error=str(error), **_device_fields(device))
 
@@ -36,7 +36,7 @@ class ScrapeError(
 class AuthError(PublicHyperglassError, template="authentication_error", level="danger"):
     """Raised when authentication to a device fails."""
 
-    def __init__(self, *, error: BaseException, device: "Device"):
+    def __init__(self, *, error: Union[BaseException, str], device: "Device"):
         """Initialize parent error."""
         super().__init__(error=str(error), **_device_fields(device))
 
@@ -44,7 +44,7 @@ class AuthError(PublicHyperglassError, template="authentication_error", level="d
 class RestError(PublicHyperglassError, template="connection_error", level="danger"):
     """Raised upon a rest API client error."""
 
-    def __init__(self, *, error: BaseException, device: "Device"):
+    def __init__(self, *, error: Union[BaseException, str], device: "Device"):
         """Initialize parent error."""
         super().__init__(error=str(error), **_device_fields(device))
 
@@ -52,7 +52,7 @@ class RestError(PublicHyperglassError, template="connection_error", level="dange
 class DeviceTimeout(PublicHyperglassError, template="request_timeout", level="danger"):
     """Raised when the connection to a device times out."""
 
-    def __init__(self, *, error: BaseException, device: "Device"):
+    def __init__(self, *, error: Union[BaseException, str], device: "Device"):
         """Initialize parent error."""
         super().__init__(error=str(error), **_device_fields(device))
 

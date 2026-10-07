@@ -2,6 +2,7 @@
 
 # Standard Library
 import typing as t
+import asyncio
 from abc import ABC, abstractmethod
 
 # Project
@@ -33,14 +34,18 @@ class Connection(ABC):
         self.plugin_manager = OutputPluginManager()
 
     @abstractmethod
-    def setup_proxy(self: "Connection") -> "SSHTunnelForwarder":
-        """Return a preconfigured sshtunnel.SSHTunnelForwarder instance."""
+    def setup_proxy(self: "Connection") -> t.AsyncContextManager["SSHTunnelForwarder"]:
+        """Open an SSH tunnel to the device through its proxy, for the duration of the context."""
         pass
 
     async def response(self, output: Series[str]) -> t.Union["OutputDataModel", str]:
         """Send output through common parsers."""
 
-        response = self.plugin_manager.execute(output=output, query=self.query_data)
+        # Parsing can be slow & do network I/O (e.g. external RPKI validation), so run it in a
+        # worker thread to avoid blocking the event loop.
+        response = await asyncio.to_thread(
+            self.plugin_manager.execute, output=output, query=self.query_data
+        )
 
         if response is None:
             response = ()

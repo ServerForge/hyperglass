@@ -3,10 +3,9 @@
 # Standard Library
 import re
 import json as _json
-import socket
 import typing as t
 from json import JSONDecodeError
-from socket import gaierror
+from urllib.parse import urlencode
 
 # Third Party
 import httpx
@@ -44,8 +43,10 @@ class BaseExternal:
         uri_prefix: str = "",
         uri_suffix: str = "",
         verify_ssl: bool = True,
-        timeout: int = 10,
+        timeout: t.Union[int, float] = 10,
         parse: bool = True,
+        headers: t.Optional[t.Dict[str, str]] = None,
+        auth: t.Optional[t.Tuple[str, str]] = None,
     ) -> None:
         """Initialize connection instance."""
         self.__name__ = getattr(self, "name", "BaseExternal")
@@ -67,6 +68,8 @@ class BaseExternal:
             "base_url": self.base_url,
             "timeout": self.timeout,
             "verify": context,
+            "headers": {"user-agent": f"hyperglass/{__version__}", **(headers or {})},
+            "auth": auth,
         }
 
         self._session = httpx.Client(**client_kwargs)
@@ -81,13 +84,9 @@ class BaseExternal:
         cls.name = name or cls.__name__
 
     async def __aenter__(self: "BaseExternal") -> "BaseExternal":
-        """Test connection on entry."""
-        available = await self._atest()
-
-        if available:
-            log.bind(url=self.base_url).debug("Initialized session")
-            return self
-        raise self._exception(f"Unable to create session to {self.name}")
+        """Enter session."""
+        log.bind(url=self.base_url).debug("Initialized session")
+        return self
 
     async def __aexit__(
         self: "BaseExternal",
@@ -107,13 +106,9 @@ class BaseExternal:
         return True
 
     def __enter__(self: "BaseExternal") -> "BaseExternal":
-        """Test connection on entry."""
-        available = self._test()
-
-        if available:
-            log.bind(url=self.base_url).debug("Initialized session")
-            return self
-        raise self._exception(f"Unable to create session to {self.name}")
+        """Enter session."""
+        log.bind(url=self.base_url).debug("Initialized session")
+        return self
 
     def __exit__(
         self: "BaseExternal",
@@ -160,38 +155,6 @@ class BaseExternal:
             parsed = response
         return parsed
 
-    def _test(self: "BaseExternal") -> bool:
-        """Open a low-level connection to the base URL to ensure its port is open."""
-        log.bind(url=self.base_url).debug("Testing connection")
-
-        try:
-            # Parse out just the hostname from a URL string.
-            # E.g. `https://www.example.com` becomes `www.example.com`
-            test_host = re.sub(r"http(s)?\:\/\/", "", self.base_url)
-
-            # Create a generic socket object
-            test_socket = socket.socket()
-
-            # Try opening a low-level socket to make sure it's even
-            # listening on the port prior to trying to use it.
-            test_socket.connect((test_host, 443))
-
-            # Properly shutdown & close the socket.
-            test_socket.shutdown(1)
-            test_socket.close()
-
-        except gaierror as err:
-            # Raised if the target isn't listening on the port
-            raise self._exception(
-                f"{self.name!r} appears to be unreachable at {self.base_url!r}", err
-            ) from None
-
-        return True
-
-    async def _atest(self: "BaseExternal") -> bool:
-        """Open a low-level connection to the base URL to ensure its port is open."""
-        return self._test()
-
     def _build_request(self: "BaseExternal", **kwargs: t.Any) -> t.Dict[str, t.Any]:
         """Process requests parameters into structure usable by http library."""
         # Standard Library
@@ -215,28 +178,30 @@ class BaseExternal:
                 f"Method must be one of {', '.join(supported_methods)}. Got: {str(method)}"
             )
 
-        endpoint = "/".join(
-            i
-            for i in (
-                "",
-                self.uri_prefix.strip("/"),
-                endpoint.strip("/"),
-                self.uri_suffix.strip("/"),
-                item,
+        if re.match(r"^https?://", endpoint, re.IGNORECASE):
+            # Use absolute URLs, e.g. a configured webhook URL, as-is.
+            url = endpoint
+        else:
+            url = "/".join(
+                i
+                for i in (
+                    "",
+                    self.uri_prefix.strip("/"),
+                    endpoint.strip("/"),
+                    self.uri_suffix.strip("/"),
+                    item,
+                )
+                if i
             )
-            if i
-        )
 
-        request = {
-            "method": method,
-            "url": endpoint,
-            "headers": {"user-agent": f"hyperglass/{__version__}"},
-        }
+        request = {"method": method, "url": url}
 
         if headers is not None:
-            request.update({"headers": headers})
+            # Merged with the session's headers.
+            request["headers"] = headers
 
-        if params is not None:
+        if params:
+            # Query parameters replace any query string in the URL.
             params = {str(k): str(v) for k, v in params.items() if v is not None}
             request["params"] = params
 
@@ -246,11 +211,11 @@ class BaseExternal:
             request["json"] = _prepare_dict(data)
 
         if timeout is not None:
-            if not isinstance(timeout, int):
+            if not isinstance(timeout, (int, float)):
                 try:
-                    timeout = int(timeout)
-                except TypeError as err:
-                    raise self._exception(f"Timeout must be an int, got: {str(timeout)}") from err
+                    timeout = float(timeout)
+                except (TypeError, ValueError) as err:
+                    raise self._exception(f"Timeout must be a number, got: {str(timeout)}") from err
             request["timeout"] = timeout
         return request
 
@@ -270,7 +235,7 @@ class BaseExternal:
             method=method,
             endpoint=endpoint,
             item=item,
-            headers=None,
+            headers=headers,
             params=params,
             data=data,
             timeout=timeout,
@@ -326,7 +291,7 @@ class BaseExternal:
             method=method,
             endpoint=endpoint,
             item=item,
-            headers=None,
+            headers=headers,
             params=params,
             data=data,
             timeout=timeout,
@@ -365,3 +330,42 @@ class BaseExternal:
 
     def _head(self: "BaseExternal", endpoint: str, **kwargs: t.Any) -> t.Any:
         return self._request(method="HEAD", endpoint=endpoint, **kwargs)
+
+
+class BaseWebhook(BaseExternal):
+    """Base webhook session handler, which sends requests to the configured URL."""
+
+    config: "Http"
+
+    def __init__(self: "BaseWebhook", config: "Http", parse: bool = True) -> None:
+        """Initialize external base class with the webhook's connection details."""
+        headers = config.headers.copy()
+        auth = None
+        if config.authentication is not None:
+            if config.authentication.mode == "api_key":
+                headers.update(config.authentication.api_key())
+            else:
+                auth = config.authentication.basic()
+
+        super().__init__(
+            base_url=f"{config.host.scheme}://{config.host.host}:{config.host.port}",
+            config=config,
+            verify_ssl=config.verify_ssl,
+            timeout=config.timeout,
+            parse=parse,
+            headers=headers,
+            auth=auth,
+        )
+
+    @property
+    def url(self: "BaseWebhook") -> str:
+        """Get the webhook URL, with configured parameters added to its query string."""
+        url = httpx.URL(str(self.config.host))
+        if self.config.params:
+            query = "&".join(q for q in (url.query.decode(), urlencode(self.config.params)) if q)
+            url = url.copy_with(query=query.encode())
+        return str(url)
+
+    async def _send(self: "BaseWebhook", data: t.Dict[str, t.Any]) -> t.Any:
+        """POST data to the webhook URL."""
+        return await self._apost(endpoint=self.url, data=data)

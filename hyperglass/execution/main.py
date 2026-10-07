@@ -46,28 +46,28 @@ async def execute(query: "Query") -> Union["OutputDataModel", str]:
 
     async def collect():
         if query.device.proxy:
-            proxy = driver.setup_proxy()
-            with proxy() as tunnel:
+            async with driver.setup_proxy() as tunnel:
                 return await driver.collect(tunnel.local_bind_host, tunnel.local_bind_port)
         return await driver.collect()
 
+    async def collect_and_parse():
+        # Parsing is included in the timeout, since it can take a while (e.g. external RPKI
+        # validation).
+        return await driver.response(await collect())
+
     try:
-        response = await asyncio.wait_for(collect(), timeout=params.request_timeout - 1)
+        output = await asyncio.wait_for(collect_and_parse(), timeout=params.request_timeout - 1)
     except asyncio.TimeoutError as err:
         error = TimeoutError("Connection timed out")
         raise DeviceTimeout(error=error, device=query.device) from err
 
-    output = await driver.response(response)
-
     if is_series(output):
-        if len(output) == 0:
-            raise ResponseEmpty(query=query)
         output = "\n\n".join(output)
 
-    elif isinstance(output, str):
+    if isinstance(output, str):
         # If the output is a string (not structured) and is empty,
         # produce an error.
-        if output == "" or output == "\n":
+        if output.strip() == "":
             raise ResponseEmpty(query=query)
 
     elif isinstance(output, Dict):
