@@ -1,6 +1,7 @@
 """Logging instance setup & configuration."""
 
 # Standard Library
+import os
 import sys
 import typing as t
 import logging
@@ -26,6 +27,7 @@ if t.TYPE_CHECKING:
 
     # Project
     from hyperglass.models.fields import LogFormat
+    from hyperglass.models.config.logging import Logging
 
 _FMT_DEBUG = (
     "<lvl><b>[{level}]</b> {time:YYYYMMDD} {time:HH:mm:ss} <lw>|</lw>"
@@ -72,13 +74,20 @@ HyperglassConsole = Console(
 
 log = _loguru_logger
 
+# ID of the process in which logging was configured by `configure_logging()`.
+_configured_pid: t.Optional[int] = None
+
 
 def formatter(record: "Record") -> str:
-    """Format log messages with extra data as kwargs string."""
-    msg = record.get("message", "")
+    """Format log messages with extra data as kwargs string.
+
+    Loguru uses the returned string as a format template, so the message is referenced rather
+    than included, and braces in extra data are escaped. Otherwise, any message or extra data
+    containing braces would fail to format, and the message would be dropped.
+    """
     extra = record.get("extra", {})
-    extra_str = dict_to_kwargs(extra)
-    return " ".join((msg, extra_str))
+    extra_str = dict_to_kwargs(extra).replace("{", "{{").replace("}", "}}")
+    return " ".join(("{message}", extra_str))
 
 
 def filter_uvicorn_values(record: "Record") -> bool:
@@ -169,6 +178,7 @@ def enable_file_logging(
     log_format: "LogFormat",
     max_size: "ByteSize",
     level: t.Union[str, int],
+    header: bool = True,
 ) -> None:
     """Set up file-based logging from configuration parameters."""
 
@@ -181,7 +191,7 @@ def enable_file_logging(
 
     log_file = directory / log_file_name
 
-    if log_format == "text":
+    if log_format == "text" and header:
         now_str = datetime.utcnow().strftime("%B %d, %Y beginning at %H:%M:%S UTC")
         header_lines = (
             f"# {line}"
@@ -205,11 +215,14 @@ def enable_file_logging(
         encoding="utf8",
         colorize=False,
         rotation=max_size.human_readable(),
+        # Each web server worker process logs to the file & rotates it. Reopen the file when another
+        # process rotates it, rather than continuing to log to the rotated file.
+        watch=True,
     )
     _loguru_logger.bind(path=log_file).debug("Logging to file")
 
 
-def enable_syslog_logging(*, host: str, port: int) -> None:
+def enable_syslog_logging(*, host: str, port: int, level: t.Union[str, int] = logging.INFO) -> None:
     """Set up syslog logging from configuration parameters."""
 
     # Standard Library
@@ -220,5 +233,33 @@ def enable_syslog_logging(*, host: str, port: int) -> None:
         format=_FMT_BASIC,
         enqueue=True,
         colorize=False,
+        level=level,
     )
     _loguru_logger.bind(host=host, port=port).debug("Logging to syslog target")
+
+
+def configure_logging(level: t.Union[str, int], *, params: "Logging", header: bool = True) -> None:
+    """Set up console, file & syslog logging from configuration parameters, once per process.
+
+    uvicorn's workers are separate processes, which don't inherit the logging configuration of
+    the process that started them, so each worker configures its own logging.
+    """
+    global _configured_pid
+
+    if _configured_pid == os.getpid():
+        return
+
+    # Send third party libraries' logs to hyperglass's logger.
+    logging.basicConfig(handlers=[LibInterceptHandler()], level=level, force=True)
+    init_logger(level)
+    enable_file_logging(
+        directory=params.directory,
+        log_format=params.format,
+        max_size=params.max_size,
+        level=level,
+        header=header,
+    )
+    if params.syslog is not None and params.syslog.enable:
+        enable_syslog_logging(host=params.syslog.host, port=params.syslog.port, level=level)
+
+    _configured_pid = os.getpid()

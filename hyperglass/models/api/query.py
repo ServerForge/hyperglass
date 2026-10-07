@@ -153,14 +153,18 @@ class Query(BaseModel):
 
     @field_validator("query_location")
     def validate_query_location(cls, value):
-        """Ensure query_location is defined."""
+        """Ensure query_location is defined, and use the device's ID if its name is provided."""
 
         devices = use_state("devices")
 
-        if not devices.valid_id_or_name(value):
-            raise QueryLocationNotFound(location=value)
+        for device in devices:
+            if device.id == value:
+                return value
+        for device in devices:
+            if device.name == value:
+                return device.id
 
-        return value
+        raise QueryLocationNotFound(location=value)
 
     @field_validator("query_type")
     def validate_query_type(cls, value: t.Any):

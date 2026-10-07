@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Query targets are now restricted to characters used by IP prefixes, BGP communities and AS path expressions, and `|` is only accepted as regex alternation (directly followed by a digit, `_`, `^` or `[`). Previously, crafted BGP community/AS path queries (or IPv6 zone IDs, e.g. `2001:db8::1%x"; id; "`) could inject commands into the device CLI, or into a shell on FRR, BIRD, OpenBGPD and TNSR. OpenBGPD AS path & community commands now also quote the query target.
 - **Behavior change:** regex `condition` patterns on directive `permit` rules now must match the entire query target (`re.fullmatch`) instead of only its beginning. `deny` rules still match the beginning of the query target.
 - A directive `deny` rule could be bypassed by querying a list of targets in which the denied value wasn't first.
+- Error responses no longer include internal details passed to error messages, such as an SSH proxy's address and username.
+- The Redis password is no longer shown in logs or by `hyperglass settings`.
 - Upgraded dependencies with known vulnerabilities (Litestar, paramiko, cryptography, Jinja2, h11, idna, Next.js and others). Removed the unused `PyJWT`, `distro` and `aiofiles` dependencies, plus unused frontend ESLint/Prettier tooling.
 
 ### Changed
@@ -17,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - `hyperglass build-ui` no longer requires configuration or Redis.
 - The default number of web server workers is now the number of CPUs available to hyperglass (respecting container CPU limits), up to 4. Previously it was twice the host's CPU count, e.g. 64 workers using ~6 GB of memory on a 32-thread host.
 - Docker images cache Python & UI dependencies, so rebuilding an image after a code change doesn't reinstall them.
+- **Behavior change (API):** validation errors return HTTP 400 instead of 200, unknown devices return 404 instead of 500, and `GET /api/queries` returns query type IDs (as accepted by `POST /api/query`) instead of names. A device's name is also accepted as `queryLocation`.
+- `hyperglass clear-cache` now only deletes cached responses & lookups, so it's safe to run while hyperglass is running; previously it deleted all hyperglass state, breaking a running instance until it was restarted. hyperglass also only deletes its own keys from Redis at startup, instead of the whole database.
+- Cached responses now expire `cache.timeout` seconds after the query ran. Previously each cache hit extended the expiration, so a frequently repeated query was never refreshed. `cache.timeout: 0` disables caching.
+- Client errors, e.g. invalid input, are logged at the info level instead of as critical errors.
 
 ### Fixed
 - `hyperglass start --build` built the UI, but never started hyperglass.
@@ -28,8 +34,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The `favicon.ico` `<link/>` tag pointed to a nonexistent `favicon-64x64.ico` file.
 - `hyperglass system-info` failed with `KeyError: 'hyperglass_directory'`.
 - Removed DSA key support from SSH proxy tunnels; DSA keys are no longer supported by paramiko 4+.
+- Web server workers didn't write to log files or syslog, and logged at the debug level.
+- A failed start (e.g. the port was in use) exited with status 0 and a "keyboard interrupt" message, so service managers didn't restart hyperglass.
+- NodeJS was required even with the UI disabled.
+- `HYPERGLASS_HOST=[::1]` (as documented) was rejected, as was an IPv6 `HYPERGLASS_REDIS_HOST`. Redis passwords containing URL characters (e.g. `@`, `/`, `#`) didn't work.
 - `HYPERGLASS_DISABLE_UI` had no effect in Docker, because it was misspelled in `compose.yaml`.
 - Docker images included the local UI build output (several GB in a development checkout), Python caches and git history from the build context.
+- Console log messages containing braces were dropped.
+- Device connection errors (HTTP devices, SSH proxies) and errors containing braces (e.g. Junos `{master}`) caused a generic HTTP 500 error, and error messages could end with "(None)".
 - [#280](https://github.com/thatmattlove/hyperglass/issues/280): Fix: `condition: None` caused error in directive @Jimmy01240397
 - [#306](https://github.com/thatmattlove/hyperglass/issues/306): Fix: allow integer values in ext_community_list_raw field for Arista BGP - @cooperwinser
 - [#311](https://github.com/thatmattlove/hyperglass/issues/311): Fix: device and directive errors.
@@ -46,9 +58,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - `HYPERGLASS_WORKERS` environment variable, to set the number of web server workers.
-- Query rate limiting, enabled by default at 60 queries per minute per client. Configure it with the new `rate_limit` section; see the Rate Limiting docs.
+- Query rate limiting, enabled by default at 60 queries per minute per client. Configure it with the new `rate_limit` section; see the Rate Limiting docs. The limit is shared by all web server workers, and IPv6 clients are limited per /64 network.
 - `HYPERGLASS_TRUSTED_PROXIES` environment variable, for reverse proxies trusted to set the client address via `X-Forwarded-For`. Defaults to `127.0.0.1,::1`. When running hyperglass in Docker behind a reverse proxy, see the new "Behind a Reverse Proxy" section of the Docker docs.
 - Docker Compose passes `HYPERGLASS_WORKERS` and `HYPERGLASS_TRUSTED_PROXIES` to the container, if they're set.
+- hyperglass now reads `hyperglass.env` from `HYPERGLASS_APP_PATH`, as documented (previously, only the sample systemd services read it). Environment variables take precedence.
 - [#304](https://github.com/thatmattlove/hyperglass/pull/304): Add FRR structured output for BGP Routes - @chriswiggins
 
 ## 2.0.4 - 2024-06-30

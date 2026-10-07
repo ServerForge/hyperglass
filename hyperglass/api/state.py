@@ -1,15 +1,15 @@
 """hyperglass state dependencies."""
 
-# Standard Library
-import typing as t
-
 # Project
-from hyperglass.state import use_state
+from hyperglass.state import HyperglassState, use_state
 
 
-async def get_state(attr: t.Optional[str] = None):
-    """Get hyperglass state as a FastAPI dependency."""
-    return use_state(attr)
+async def get_state() -> HyperglassState:
+    """Get hyperglass state as a dependency.
+
+    Dependencies' parameters become request parameters, so this must not accept any.
+    """
+    return use_state()
 
 
 async def get_params():

@@ -1,6 +1,7 @@
 """Interact with redis for state management."""
 
 # Standard Library
+import re
 import pickle
 import typing as t
 from types import TracebackType
@@ -60,6 +61,25 @@ class RedisManager:
     def delete(self, key: t.Union[str, t.Sequence[str]]) -> None:
         """Delete a key and value from the cache."""
         self.instance.delete(self.key(key))
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete all keys starting with `prefix` (not namespaced), and get the number deleted.
+
+        Unlike deleting the whole database, other applications' keys aren't affected. Keys are
+        found incrementally, so Redis isn't blocked while searching a large database.
+        """
+        # Escape glob characters, so the prefix is matched literally.
+        pattern = re.sub(r"([*?\[\]\\])", r"\\\1", prefix) + "*"
+        deleted = 0
+        batch = []
+        for key in self.instance.scan_iter(match=pattern, count=1000):
+            batch.append(key)
+            if len(batch) == 1000:
+                deleted += self.instance.unlink(*batch)
+                batch = []
+        if batch:
+            deleted += self.instance.unlink(*batch)
+        return deleted
 
     def expire(
         self,

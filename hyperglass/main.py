@@ -10,7 +10,7 @@ import logging
 import uvicorn
 
 # Local
-from .log import LibInterceptHandler, init_logger, enable_file_logging, enable_syslog_logging
+from .log import LibInterceptHandler, init_logger, configure_logging
 from .util import get_node_version
 from .constants import MIN_NODE_VERSION, MIN_PYTHON_VERSION, __version__
 
@@ -19,21 +19,33 @@ pretty_version = ".".join(tuple(str(v) for v in MIN_PYTHON_VERSION))
 if sys.version_info < MIN_PYTHON_VERSION:
     raise RuntimeError(f"Python {pretty_version}+ is required.")
 
-# Ensure the NodeJS version meets the minimum requirements.
-node_major, node_minor, node_patch = get_node_version()
-
-if node_major < MIN_NODE_VERSION:
-    installed = ".".join(str(v) for v in (node_major, node_minor, node_patch))
-    raise RuntimeError(f"NodeJS {MIN_NODE_VERSION!s}+ is required (version {installed} installed)")
-
 
 # Local
 from .state import use_state
 from .settings import Settings
 
-LOG_LEVEL = logging.INFO if Settings.debug is False else logging.DEBUG
+LOG_LEVEL = Settings.log_level
 logging.basicConfig(handlers=[LibInterceptHandler()], level=0, force=True)
 log = init_logger(LOG_LEVEL)
+
+
+def check_node_version() -> None:
+    """Ensure NodeJS, which the UI requires, is installed & meets the minimum version."""
+    try:
+        version = get_node_version()
+    except Exception as err:
+        raise RuntimeError(
+            f"NodeJS {MIN_NODE_VERSION!s}+ is required for the UI, but it could not be run: {err!s}"
+        ) from err
+
+    if not version:
+        raise RuntimeError(f"NodeJS {MIN_NODE_VERSION!s}+ is required for the UI")
+
+    if version[0] < MIN_NODE_VERSION:
+        installed = ".".join(str(v) for v in version)
+        raise RuntimeError(
+            f"NodeJS {MIN_NODE_VERSION!s}+ is required (version {installed} installed)"
+        )
 
 
 async def build_ui() -> bool:
@@ -91,10 +103,13 @@ def start(*, log_level: t.Union[str, int], workers: int) -> None:
     register_all_plugins()
 
     if not Settings.disable_ui:
+        check_node_version()
         asyncio.run(build_ui())
 
     uvicorn.run(
-        app="hyperglass.api:app",
+        # Import the app from its module, rather than `hyperglass.api`, where `app` can resolve to
+        # the `hyperglass.api.app` module instead of the application.
+        app="hyperglass.api.app:app",
         host=str(Settings.host),
         port=Settings.port,
         workers=workers,
@@ -138,18 +153,8 @@ def run(workers: int = None):
 
         init_user_config()
 
-        enable_file_logging(
-            directory=state.params.logging.directory,
-            max_size=state.params.logging.max_size,
-            log_format=state.params.logging.format,
-            level=LOG_LEVEL,
-        )
+        configure_logging(LOG_LEVEL, params=state.params.logging)
 
-        if state.params.logging.syslog is not None:
-            enable_syslog_logging(
-                host=state.params.logging.syslog.host,
-                port=state.params.logging.syslog.port,
-            )
         _workers = workers or Settings.worker_count()
 
         log.bind(
@@ -174,9 +179,11 @@ def run(workers: int = None):
             log.debug("Cleared hyperglass state")
         unregister_all_plugins()
         raise error
-    except (SystemExit, BaseException):
+    except BaseException:
+        # E.g. KeyboardInterrupt, or SystemExit if the server fails to start (e.g. the port is in
+        # use). Re-raise, so a failure's exit status is preserved.
         unregister_all_plugins()
-        sys.exit(4)
+        raise
 
 
 if __name__ == "__main__":

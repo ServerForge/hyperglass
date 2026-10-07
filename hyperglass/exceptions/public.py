@@ -12,6 +12,15 @@ if TYPE_CHECKING:
     from hyperglass.models.config.devices import Device
 
 
+def _device_fields(device: "Device") -> Dict[str, Any]:
+    """Get device fields available to message templates, e.g. `{device_name}`."""
+    proxy = None
+    if device.proxy is not None:
+        proxy = str(device.proxy.address)
+    # `device` is kept for templates written for previous versions.
+    return {"device_name": device.name, "device": device.name, "proxy": proxy}
+
+
 class ScrapeError(
     PublicHyperglassError,
     template="connection_error",
@@ -21,7 +30,7 @@ class ScrapeError(
 
     def __init__(self, *, error: BaseException, device: "Device"):
         """Initialize parent error."""
-        super().__init__(error=str(error), device=device.name, proxy=device.proxy)
+        super().__init__(error=str(error), **_device_fields(device))
 
 
 class AuthError(PublicHyperglassError, template="authentication_error", level="danger"):
@@ -29,7 +38,7 @@ class AuthError(PublicHyperglassError, template="authentication_error", level="d
 
     def __init__(self, *, error: BaseException, device: "Device"):
         """Initialize parent error."""
-        super().__init__(error=str(error), device=device.name, proxy=device.proxy)
+        super().__init__(error=str(error), **_device_fields(device))
 
 
 class RestError(PublicHyperglassError, template="connection_error", level="danger"):
@@ -37,7 +46,7 @@ class RestError(PublicHyperglassError, template="connection_error", level="dange
 
     def __init__(self, *, error: BaseException, device: "Device"):
         """Initialize parent error."""
-        super().__init__(error=str(error), device=device.name)
+        super().__init__(error=str(error), **_device_fields(device))
 
 
 class DeviceTimeout(PublicHyperglassError, template="request_timeout", level="danger"):
@@ -45,10 +54,10 @@ class DeviceTimeout(PublicHyperglassError, template="request_timeout", level="da
 
     def __init__(self, *, error: BaseException, device: "Device"):
         """Initialize parent error."""
-        super().__init__(error=str(error), device=device.name, proxy=device.proxy)
+        super().__init__(error=str(error), **_device_fields(device))
 
 
-class InvalidQuery(PublicHyperglassError, template="request_timeout"):
+class InvalidQuery(PublicHyperglassError, template="invalid_query"):
     """Raised when input validation fails."""
 
     def __init__(
@@ -59,7 +68,7 @@ class InvalidQuery(PublicHyperglassError, template="request_timeout"):
         kwargs = {
             "query_type": query.query_type,
             "target": query.query_target,
-            "error": str(error),
+            "error": error,
             **kwargs,
         }
 
@@ -107,7 +116,7 @@ class InputInvalid(PublicHyperglassError, template="invalid_input"):
     ) -> None:
         """Initialize parent error."""
 
-        kwargs = {"target": target, "error": str(error), **kwargs}
+        kwargs = {"target": target, "error": error, **kwargs}
 
         super().__init__(**kwargs)
 
@@ -123,7 +132,7 @@ class InputNotAllowed(PublicHyperglassError, template="target_not_allowed"):
         kwargs = {
             "query_type": query.query_type,
             "target": query.query_target,
-            "error": str(error),
+            "error": error,
             **kwargs,
         }
 
@@ -141,7 +150,7 @@ class ResponseEmpty(PublicHyperglassError, template="no_output"):
         kwargs = {
             "query_type": query.query_type,
             "target": query.query_target,
-            "error": str(error),
+            "error": error,
             **kwargs,
         }
 

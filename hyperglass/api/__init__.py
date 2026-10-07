@@ -16,5 +16,9 @@ def __getattr__(name: str) -> "Litestar":
         # Local
         from .app import app
 
+        # Importing the `app` submodule binds the module to this package's `app` attribute, so
+        # later lookups would return the module instead of calling this function. Replace it with
+        # the application, so `hyperglass.api:app` resolves to the application every time.
+        globals()["app"] = app
         return app
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

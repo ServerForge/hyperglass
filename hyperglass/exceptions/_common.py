@@ -1,6 +1,7 @@
 """Custom exceptions for hyperglass."""
 
 # Standard Library
+import re
 import json as _json
 from typing import Any, Set, Dict, List, Union, Literal, Optional
 
@@ -9,10 +10,40 @@ from pydantic import ValidationError
 
 # Project
 from hyperglass.log import log
-from hyperglass.util import get_fmt_keys, repr_from_attrs
+from hyperglass.util import repr_from_attrs
 from hyperglass.constants import STATUS_CODE_MAP
 
 ErrorLevel = Literal["danger", "warning"]
+
+# Format placeholders: named (`{key}`), numbered (`{0}`) or automatically numbered (`{}`).
+_PLACEHOLDER = re.compile(r"\{(\w*)\}")
+
+
+def safe_format(template: str, *args: Any, **kwargs: Any) -> str:
+    """Replace placeholders in a template with arguments' values.
+
+    Unlike `str.format()`, placeholders without a matching argument and any other braces (e.g. in
+    device output included in an error) are left as-is, rather than raising an error.
+    """
+    positional = iter(args)
+
+    def replace(match: re.Match) -> str:
+        key = match.group(1)
+        if key == "":
+            return str(next(positional, match.group(0)))
+        if key.isdigit():
+            index = int(key)
+            return str(args[index]) if index < len(args) else match.group(0)
+        if key in kwargs:
+            return str(kwargs[key])
+        return match.group(0)
+
+    return _PLACEHOLDER.sub(replace, str(template))
+
+
+def has_placeholder(template: str, key: str) -> bool:
+    """Determine if a template contains a named placeholder."""
+    return key in _PLACEHOLDER.findall(template)
 
 
 class HyperglassError(Exception):
@@ -28,6 +59,10 @@ class HyperglassError(Exception):
         self._message = message
         self._level = level
         self._keywords = keywords or []
+        self._log()
+
+    def _log(self) -> None:
+        """Log the error when it's created."""
         if self._level == "warning":
             log.error(str(self))
         elif self._level == "danger":
@@ -53,20 +88,14 @@ class HyperglassError(Exception):
 
     def json(self) -> str:
         """Return the instance's attributes as a JSON object."""
-        return _json.dumps(self.__dict__())
+        return _json.dumps(self.dict())
 
     @staticmethod
-    def _safe_format(template: str, **kwargs: Dict[str, str]) -> str:
-        """Safely format a string template from keyword arguments."""
+    def _safe_format(template: str, *args: Any, **kwargs: Any) -> str:
+        """Safely format a string template from arguments."""
+        return safe_format(template, *args, **kwargs)
 
-        keys = get_fmt_keys(template)
-        for key in keys:
-            if key not in kwargs:
-                kwargs.pop(key)
-            else:
-                kwargs[key] = str(kwargs[key])
-        return template.format(**kwargs)
-
+    @staticmethod
     def _parse_pydantic_errors(*errors: Dict[str, Any]) -> str:
         errs = ("\n",)
 
@@ -83,10 +112,12 @@ class HyperglassError(Exception):
                 out.add(val)
             elif isinstance(val, list):
                 for v in val:
-                    out.add(v)
-            else:
+                    out.add(str(v))
+            elif val is not None:
                 out.add(str(val))
-        self._keywords = list(out)
+        # Keywords are highlighted in the message. Exclude values that aren't part of the message,
+        # so internal details passed to the message template aren't exposed.
+        self._keywords = [k for k in out if k and k in self._message]
 
     @property
     def message(self) -> str:
@@ -133,26 +164,37 @@ class PublicHyperglassError(HyperglassError):
         if level is not None:
             cls._level = level
 
-    def __init__(self, **kwargs: str) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Format error message with keyword arguments."""
         # Project
         from hyperglass.state import use_state
-
-        if "error" in kwargs:
-            error = kwargs.pop("error")
-            error = self._safe_format(str(error), **kwargs)
-            kwargs["error"] = error
 
         template = self._message_template
 
         (messages := use_state("params").messages)
         if messages.has(self._original_template_name):
             template = messages[self._original_template_name]
-        if "error" in kwargs and "({error})" not in template:
-            template += " ({error})"
+
+        error = kwargs.pop("error", None)
+        if error is not None and str(error) != "":
+            # Error text may itself be a template, e.g. "No rules matched target '{target}'".
+            kwargs["error"] = self._safe_format(str(error), **kwargs)
+            if not has_placeholder(template, "error"):
+                template += " ({error})"
+        elif has_placeholder(template, "error"):
+            kwargs["error"] = ""
+
         self._message = self._safe_format(template, **kwargs)
         self._keywords = list(kwargs.values())
         super().__init__(message=self._message, level=self._level, keywords=self._keywords)
+
+    def _log(self) -> None:
+        """Log the error when it's created.
+
+        User-facing errors, e.g. invalid input, are logged by the API's error handlers along with
+        the request & response status, at a level appropriate for the response.
+        """
+        log.debug(str(self))
 
 
 class PrivateHyperglassError(HyperglassError):
@@ -176,16 +218,16 @@ class PrivateHyperglassError(HyperglassError):
         if level is not None:
             cls._level = level
 
-    def __init__(self, message: str, **kwargs: Any) -> None:
-        """Format error message with keyword arguments."""
+    def __init__(self, message: str, *args: Any, **kwargs: Any) -> None:
+        """Format error message with positional & keyword arguments."""
         if "error" in kwargs:
             error = kwargs.pop("error")
-            error = self._safe_format(str(error), **kwargs)
+            error = self._safe_format(str(error), *args, **kwargs)
             kwargs["error"] = error
 
         if isinstance(message, ValidationError):
             message = self._parse_validation_error(message)
 
-        self._message = self._safe_format(message, **kwargs)
-        self._keywords = list(kwargs.values())
+        self._message = self._safe_format(message, *args, **kwargs)
+        self._keywords = [*args, *kwargs.values()]
         super().__init__(message=self._message, level=self._level, keywords=self._keywords)

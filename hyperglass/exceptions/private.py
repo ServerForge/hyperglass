@@ -54,6 +54,9 @@ class InputValidationError(PrivateHyperglassError):
         self.kwargs = kwargs
         super().__init__(message="", **kwargs)
 
+    def _log(self) -> None:
+        """Don't log the error, which has no message; the `InputInvalid` error raised from it is."""
+
 
 class ConfigInvalid(PrivateHyperglassError):
     """Raised when a config item fails type or option validation."""

@@ -9,12 +9,13 @@ from datetime import UTC, datetime
 # Third Party
 from litestar import Request, Response, get, post
 from litestar.di import Provide
+from litestar.exceptions import NotFoundException
 from litestar.background_tasks import BackgroundTask
 
 # Project
 from hyperglass.log import log
 from hyperglass.state import HyperglassState
-from hyperglass.exceptions import HyperglassError
+from hyperglass.exceptions import HyperglassError, safe_format
 from hyperglass.models.api import Query
 from hyperglass.models.data import OutputDataModel
 from hyperglass.util.typing import is_type
@@ -37,10 +38,19 @@ __all__ = (
 )
 
 
-@get("/api/devices/{id:str}", dependencies={"devices": Provide(get_devices)})
-async def device(devices: Devices, id: str) -> APIDevice:
+@get(
+    "/api/devices/{id:str}",
+    dependencies={"devices": Provide(get_devices), "params": Provide(get_params)},
+)
+async def device(devices: Devices, params: Params, id: str) -> APIDevice:
     """Retrieve a device by ID."""
-    return devices[id].export_api()
+    try:
+        return devices[id].export_api()
+    except IndexError:
+        message = safe_format(
+            params.messages.not_found, type=params.web.text.query_location, name=id
+        )
+        raise NotFoundException(message) from None
 
 
 @get("/api/devices", dependencies={"devices": Provide(get_devices)})
@@ -51,8 +61,8 @@ async def devices(devices: Devices) -> t.List[APIDevice]:
 
 @get("/api/queries", dependencies={"devices": Provide(get_devices)})
 async def queries(devices: Devices) -> t.List[str]:
-    """Retrieve all directive names."""
-    return devices.directive_names()
+    """Retrieve all directive IDs, i.e. valid `queryType` values."""
+    return list(dict.fromkeys(i for device in devices for i in device.directive_ids))
 
 
 @get("/api/info", dependencies={"params": Provide(get_params)})
@@ -67,6 +77,9 @@ async def query(_state: HyperglassState, request: Request, data: Query) -> Query
 
     timestamp = datetime.now(UTC)
 
+    # Each access of `_state.params` reads it from Redis.
+    params = _state.params
+
     # Initialize cache
     cache = _state.redis
 
@@ -78,67 +91,62 @@ async def query(_state: HyperglassState, request: Request, data: Query) -> Query
 
     _log.info("Starting query execution")
 
-    cache_response = cache.get_map(cache_key, "output")
-    json_output = False
+    output = cache.get_map(cache_key, "output")
     cached = False
     runtime = 65535
 
-    if cache_response:
+    if output is not None:
         _log.bind(cache_key=cache_key).debug("Cache hit")
 
-        # If a cached response exists, reset the expiration time.
-        cache.expire(cache_key, expire_in=_state.params.cache.timeout)
-
+        # The cached response's expiration isn't extended, so the cache is refreshed every
+        # `cache.timeout` seconds, even if the query is repeated more often.
         cached = True
         runtime = 0
         timestamp = cache.get_map(cache_key, "timestamp")
 
-    elif not cache_response:
+    else:
         _log.bind(cache_key=cache_key).debug("Cache miss")
 
         timestamp = data.timestamp
 
         starttime = time.time()
 
-        if _state.params.fake_output:
+        if params.fake_output:
             # Return fake, static data for development purposes, if enabled.
-            output = await fake_output(
+            result = await fake_output(
                 query_type=data.query_type,
                 structured=data.device.structured_output or False,
             )
         else:
             # Pass request to execution module
-            output = await execute(data)
+            result = await execute(data)
 
         endtime = time.time()
         elapsedtime = round(endtime - starttime, 4)
         _log.debug("Runtime: {!s} seconds", elapsedtime)
 
-        if output is None:
-            raise HyperglassError(message=_state.params.messages.general, alert="danger")
+        if result is None:
+            raise HyperglassError(message=params.messages.general, level="danger")
 
-        json_output = is_type(output, OutputDataModel)
-
-        if json_output:
+        if is_type(result, OutputDataModel):
             # Export structured output as JSON string to guarantee value
             # is serializable, then convert it back to a dict.
-            as_json = output.export_json()
-            raw_output = json.loads(as_json)
+            output = json.loads(result.export_json())
         else:
-            raw_output = str(output)
+            output = str(result)
 
-        cache.set_map_item(cache_key, "output", raw_output)
-        cache.set_map_item(cache_key, "timestamp", timestamp)
-        cache.expire(cache_key, expire_in=_state.params.cache.timeout)
+        # A cache timeout of 0 disables caching.
+        if params.cache.timeout > 0:
+            with cache.pipeline() as pipeline:
+                pipeline.set_map_item(cache_key, "output", output)
+                pipeline.set_map_item(cache_key, "timestamp", timestamp)
+                pipeline.expire(cache_key, expire_in=params.cache.timeout)
 
-        _log.bind(cache_timeout=_state.params.cache.timeout).debug("Response cached")
+            _log.bind(cache_timeout=params.cache.timeout).debug("Response cached")
 
         runtime = int(round(elapsedtime, 0))
 
-    # If it does, return the cached entry
-    cache_response = cache.get_map(cache_key, "output")
-
-    json_output = is_type(cache_response, t.Dict)
+    json_output = is_type(output, t.Dict)
     response_format = "text/plain"
 
     if json_output:
@@ -146,7 +154,7 @@ async def query(_state: HyperglassState, request: Request, data: Query) -> Query
     _log.info("Execution completed")
 
     response = {
-        "output": cache_response,
+        "output": output,
         "id": cache_key,
         "cached": cached,
         "runtime": runtime,
@@ -161,7 +169,7 @@ async def query(_state: HyperglassState, request: Request, data: Query) -> Query
         response,
         background=BackgroundTask(
             send_webhook,
-            params=_state.params,
+            params=params,
             data=data,
             request=request,
             timestamp=timestamp,

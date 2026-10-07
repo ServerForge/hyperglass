@@ -7,6 +7,7 @@ from litestar.exceptions import HTTPException, ValidationException
 from litestar.static_files import create_static_files_router
 
 # Project
+from hyperglass.log import configure_logging
 from hyperglass.state import use_state
 from hyperglass.constants import __version__
 from hyperglass.exceptions import HyperglassError
@@ -21,19 +22,24 @@ __all__ = ("app",)
 
 STATE = use_state()
 
+# Each web server worker is a separate process, which doesn't inherit the logging configuration
+# of the process that started it. If the app runs in the same process, this does nothing.
+configure_logging(STATE.settings.log_level, params=STATE.params.logging, header=False)
+
 UI_DIR = STATE.settings.static_path / "ui"
 IMAGES_DIR = STATE.settings.static_path / "images"
 
 
 OPEN_API = OpenAPIConfig(
-    title=STATE.params.docs.title.format(site_title=STATE.params.site_title),
+    # Only substitute the `{site_title}` placeholder; `str.format()` fails on any other braces.
+    title=STATE.params.docs.title.replace("{site_title}", STATE.params.site_title),
     version=__version__,
     description=STATE.params.docs.description,
     path=STATE.params.docs.path,
     root_schema_site="elements",
 )
 
-RATE_LIMIT_MIDDLEWARE, STORES = create_rate_limit(STATE)
+RATE_LIMIT_MIDDLEWARE, RATE_LIMIT_SHUTDOWN = create_rate_limit(STATE)
 
 HANDLERS = [
     device,
@@ -64,10 +70,10 @@ app = Litestar(
         Exception: default_handler,
     },
     on_startup=[check_redis],
+    on_shutdown=RATE_LIMIT_SHUTDOWN,
     debug=STATE.settings.debug,
     cors_config=create_cors_config(state=STATE),
     compression_config=COMPRESSION_CONFIG,
     middleware=RATE_LIMIT_MIDDLEWARE,
-    stores=STORES,
     openapi_config=OPEN_API if STATE.params.docs.enable else None,
 )

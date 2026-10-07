@@ -20,6 +20,11 @@ if t.TYPE_CHECKING:
 
 PluginT = t.TypeVar("PluginT", bound="HyperglassPlugin")
 
+# Prefix of all keys hyperglass stores in Redis.
+KEY_PREFIX = "hyperglass."
+# Namespaces (within the state namespace) of cached data, which can be deleted at any time.
+CACHE_NAMESPACES = ("query", "external")
+
 
 class HyperglassState(StateManager):
     """Primary hyperglass state container."""
@@ -46,8 +51,18 @@ class HyperglassState(StateManager):
         self.redis.set("directives", current)
 
     def clear(self) -> None:
-        """Delete all cache keys."""
-        self.redis.instance.flushdb(asynchronous=True)
+        """Delete all hyperglass keys, i.e. state, cached data & rate limit history.
+
+        Other keys in the same Redis database aren't affected.
+        """
+        self.redis.delete_prefix(KEY_PREFIX)
+
+    def clear_cache(self) -> int:
+        """Delete cached data (e.g. query responses), and get the number of keys deleted.
+
+        State (e.g. configuration) isn't affected, so this is safe while hyperglass is running.
+        """
+        return sum(self.redis.delete_prefix(f"{self.redis.key(ns)}.") for ns in CACHE_NAMESPACES)
 
     @property
     def cache(self) -> "RedisManager":

@@ -60,10 +60,9 @@ def _start(build: bool = False, workers: t.Optional[int] = None) -> None:
         else:
             run(workers)
 
-    except (KeyboardInterrupt, SystemExit) as err:
-        error_message = str(err)
-        if (len(error_message)) > 1:
-            echo.warning(str(err))
+    # A SystemExit (e.g. the server failed to start) isn't caught, so its exit status is kept and
+    # a service manager can tell hyperglass failed.
+    except KeyboardInterrupt:
         echo.error("Stopping hyperglass due to keyboard interrupt.")
         raise typer.Exit(0)
 
@@ -118,15 +117,16 @@ def _system_info():
 
 @cli.command(name="clear-cache")
 def _clear_cache():
-    """Clear the Redis cache"""
+    """Clear cached query responses"""
     # Project
     from hyperglass.state import use_state
 
     state = use_state()
 
     try:
-        state.clear()
-        echo.success("Cleared Redis Cache")
+        # Only cached data is deleted, so a running hyperglass instance isn't affected.
+        count = state.clear_cache()
+        echo.success("Cleared {!s} cached items", count)
 
     except Exception as err:
         if not sys.stdout.isatty():
