@@ -27,7 +27,6 @@ class PluginManager(t.Generic[PluginT]):
 
     _type: PluginType
     _state: "HyperglassState"
-    _index: int = 0
     _cache_key: str
 
     def __init__(self: "PluginManager") -> None:
@@ -39,22 +38,13 @@ class PluginManager(t.Generic[PluginT]):
         """Set this plugin manager's type on subclass initialization."""
         _type = kwargs.get("type", None) or cls._type
         if _type is None:
-            raise PluginError("Plugin '{}' is missing a 'type', keyword argument", repr(cls))
+            raise PluginError("Plugin '{p}' is missing a 'type' keyword argument", p=repr(cls))
         cls._type = _type
         return super().__init_subclass__()
 
-    def __iter__(self: "PluginManager") -> "PluginManager":
-        """Plugin manager iterator."""
-        return self
-
-    def __next__(self: "PluginManager") -> PluginT:
-        """Plugin manager iteration."""
-        if self._index <= len(self.plugins()):
-            result = self.plugins()[self._index - 1]
-            self._index += 1
-            return result
-        self._index = 0
-        raise StopIteration
+    def __iter__(self: "PluginManager") -> t.Iterator[PluginT]:
+        """Iterate over all plugins."""
+        return iter(self.plugins())
 
     def plugins(self: "PluginManager", *, builtins: bool = True) -> t.List[PluginT]:
         """Get all plugins, with built-in plugins last."""
@@ -92,17 +82,21 @@ class PluginManager(t.Generic[PluginT]):
 
     def reset(self: "PluginManager") -> None:
         """Remove all plugins."""
-        self._index = 0
         self._state.reset_plugins(self._type)
 
-    def unregister(self: "PluginManager", plugin: PluginT) -> None:
-        """Remove a plugin from currently active plugins."""
-        if isclass(plugin):
-            if issubclass(plugin, HyperglassPlugin):
-                self._state.remove_plugin(self._type, plugin)
-
-                return
-        raise PluginError("Plugin '{}' is not a valid hyperglass plugin", repr(plugin))
+    def unregister(self: "PluginManager", plugin: t.Union[PluginT, t.Type[PluginT]]) -> None:
+        """Remove a plugin, by class or instance, from currently active plugins."""
+        if isinstance(plugin, HyperglassPlugin):
+            self._state.remove_plugin(self._type, plugin)
+            return
+        if isclass(plugin) and issubclass(plugin, HyperglassPlugin):
+            # Registered plugins are instances, which are equal to other instances of the same
+            # plugin class, but not to the class itself.
+            for instance in self.plugins():
+                if instance._signature == plugin.__signature__:
+                    self._state.remove_plugin(self._type, instance)
+            return
+        raise PluginError("Plugin '{p}' is not a valid hyperglass plugin", p=repr(plugin))
 
     def register(self: "PluginManager", plugin: PluginT, *args: t.Any, **kwargs: t.Any) -> None:
         """Add a plugin to currently active plugins."""
@@ -129,46 +123,69 @@ class PluginManager(t.Generic[PluginT]):
 class InputPluginManager(PluginManager[InputPlugin], type="input"):
     """Manage Input Validation Plugins."""
 
-    def _gather_plugins(
-        self: "InputPluginManager", query: "Query"
-    ) -> t.Generator[InputPlugin, None, None]:
-        for plugin in self.plugins(builtins=True):
-            if plugin.directives and query.directive.id in plugin.directives:
-                yield plugin
-            if plugin.ref in query.directive.plugins:
-                yield plugin
-            if plugin.common is True:
-                yield plugin
+    def _gather_plugins(self: "InputPluginManager", query: "Query") -> t.List[InputPlugin]:
+        """Get plugins associated with the query's directive, and common plugins."""
+        return [
+            plugin
+            for plugin in self.plugins(builtins=True)
+            if (plugin.directives and query.directive.id in plugin.directives)
+            or plugin.ref in query.directive.plugins
+            or plugin.common is True
+        ]
 
     def validate(self: "InputPluginManager", query: "Query") -> InputPluginValidationReturn:
         """Execute all input validation plugins.
 
-        If any plugin returns `False`, execution is halted.
+        If any plugin returns `False`, execution is halted. Otherwise, every plugin is executed, so
+        a plugin that returns `True` doesn't override another plugin that rejects the query.
         """
         result = None
         for plugin in self._gather_plugins(query):
-            result = plugin.validate(query)
-            result_test = "valid" if result is True else "invalid" if result is False else "none"
+            plugin_result = plugin.validate(query)
+            result_test = {True: "valid", False: "invalid"}.get(plugin_result, "none")
             log.bind(name=plugin.name, result=result_test).debug("Input Plugin Validation")
-            if result is False:
+            if plugin_result is False:
                 raise InputValidationError(
-                    error="No matched validation rules", target=query.query_target
+                    error=plugin.failure_reason or "No matched validation rules",
+                    target=query.query_target,
                 )
-            if result is True:
-                return result
+            if plugin_result is True:
+                result = True
         return result
 
     def transform(self: "InputPluginManager", *, query: "Query") -> InputPluginTransformReturn:
-        """Execute all input transformation plugins."""
+        """Execute all input transformation plugins.
+
+        The result of each plugin is passed to the next plugin.
+        """
         result = query.query_target
         for plugin in self._gather_plugins(query):
-            result = plugin.transform(query=query.summary())
-            log.bind(name=plugin.name, result=repr(result)).debug("Input Plugin Transform")
+            transformed = plugin.transform(
+                query=query.summary().model_copy(update={"query_target": result})
+            )
+            log.bind(name=plugin.name, result=repr(transformed)).debug("Input Plugin Transform")
+            # A target can't be `None`, so keep the current target if a plugin returns nothing.
+            if transformed is not None:
+                result = transformed
         return result
 
 
 class OutputPluginManager(PluginManager[OutputPlugin], type="output"):
     """Manage Output Processing Plugins."""
+
+    def _gather_plugins(self: "OutputPluginManager", query: "Query") -> t.List[OutputPlugin]:
+        """Get plugins associated with the query's directive, followed by common plugins.
+
+        A plugin without platforms applies to any platform.
+        """
+        plugins = [
+            plugin
+            for plugin in self.plugins()
+            if not plugin.platforms or query.device.platform in plugin.platforms
+        ]
+        directives = [p for p in plugins if query.directive.id in p.directives]
+        common = [p for p in plugins if p.common is True and p not in directives]
+        return [*directives, *common]
 
     def execute(self: "OutputPluginManager", *, output: OutputType, query: "Query") -> OutputType:
         """Execute all output parsing plugins.
@@ -176,13 +193,7 @@ class OutputPluginManager(PluginManager[OutputPlugin], type="output"):
         The result of each plugin is passed to the next plugin.
         """
         result = output
-        directives = (
-            plugin
-            for plugin in self.plugins()
-            if query.directive.id in plugin.directives and query.device.platform in plugin.platforms
-        )
-        common = (plugin for plugin in self.plugins() if plugin.common is True)
-        for plugin in (*directives, *common):
+        for plugin in self._gather_plugins(query):
             log.bind(plugin=plugin.name, value=result).debug("Output Plugin Starting Value")
             result = plugin.process(output=result, query=query)
             log.bind(plugin=plugin.name, value=result).debug("Output Plugin Ending Value")

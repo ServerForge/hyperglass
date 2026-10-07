@@ -1,6 +1,7 @@
 """Built-in hyperglass plugins."""
 
 # Local
+from .bgp_community import ValidateBGPCommunity
 from .bgp_route_frr import BGPRoutePluginFrr
 from .remove_command import RemoveCommand
 from .bgp_route_arista import BGPRoutePluginArista
@@ -15,4 +16,5 @@ __all__ = (
     "BGPRoutePluginHuawei",
     "MikrotikGarbageOutput",
     "RemoveCommand",
+    "ValidateBGPCommunity",
 )

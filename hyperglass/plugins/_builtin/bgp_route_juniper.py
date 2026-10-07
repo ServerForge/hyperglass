@@ -2,7 +2,7 @@
 
 # Standard Library
 import re
-from typing import TYPE_CHECKING, List, Sequence, Generator
+from typing import TYPE_CHECKING, Any, Dict, List, Union, Sequence, Generator
 
 # Third Party
 import xmltodict  # type: ignore
@@ -11,6 +11,7 @@ from pydantic import PrivateAttr, ValidationError
 # Project
 from hyperglass.log import log
 from hyperglass.exceptions.private import ParsingError
+from hyperglass.models.parsing.common import validation_error_message
 from hyperglass.models.parsing.juniper import JuniperBGPTable
 
 # Local
@@ -42,8 +43,9 @@ REMOVE_PATTERNS = (
     # {master} noqa: E800
     # ```
     #
-    # This pattern will remove anything inside braces, including the braces.
-    r"\{.+\}",
+    # This pattern will remove lines consisting only of a banner, i.e. text inside braces. Braces
+    # elsewhere, such as AS sets in an AS path, are kept.
+    r"^\{[^{}]*\}$",
 )
 
 
@@ -52,17 +54,25 @@ def clean_xml_output(output: str) -> str:
 
     def scrub(lines: List[str]) -> Generator[str, None, None]:
         """Clean & remove each pattern from each line."""
-        for pattern in REMOVE_PATTERNS:
-            for line in lines:
-                # Remove the pattern & strip extra newlines
-                scrubbed = re.sub(pattern, "", line.strip())
-                # Only return non-empty and non-newline lines
-                if scrubbed and scrubbed != "\n":
-                    yield scrubbed
+        for line in lines:
+            # Strip extra whitespace & remove the patterns.
+            scrubbed = line.strip()
+            for pattern in REMOVE_PATTERNS:
+                scrubbed = re.sub(pattern, "", scrubbed)
+            # Only return non-empty and non-newline lines
+            if scrubbed and scrubbed != "\n":
+                yield scrubbed
 
     lines = scrub(output.splitlines())
 
     return "\n".join(lines)
+
+
+def device_error_message(error: Union[Dict[str, Any], List[Dict[str, Any]], str]) -> str:
+    """Get the message(s) from a Junos `xnm:error` element."""
+    errors = error if isinstance(error, list) else [error]
+    messages = (e.get("message") if isinstance(e, dict) else e for e in errors)
+    return "; ".join(str(message).strip() for message in messages if message)
 
 
 def parse_juniper(output: Sequence[str]) -> "OutputDataModel":  # noqa: C901
@@ -78,29 +88,38 @@ def parse_juniper(output: Sequence[str]) -> "OutputDataModel":  # noqa: C901
                 cleaned, force_list=("rt", "rt-entry", "community")
             )
             if "rpc-reply" in parsed.keys():
-                if "xnm:error" in parsed["rpc-reply"]:
-                    if "message" in parsed["rpc-reply"]["xnm:error"]:
-                        err = parsed["rpc-reply"]["xnm:error"]["message"]
-                        raise ParsingError('Error from device: "{}"', err)
+                reply = parsed["rpc-reply"] or {}
+                if "xnm:error" in reply:
+                    raise ParsingError(
+                        'Error from device: "{error}"',
+                        error=device_error_message(reply["xnm:error"]) or "unknown error",
+                    )
 
-                parsed_base = parsed["rpc-reply"]["route-information"]
+                parsed_base = reply["route-information"]
             elif "route-information" in parsed.keys():
                 parsed_base = parsed["route-information"]
-
-            if "route-table" not in parsed_base:
-                return result
-
-            if "rt" not in parsed_base["route-table"]:
-                return result
-
-            parsed = parsed_base["route-table"]
-            validated = JuniperBGPTable(**parsed)
-            bgp_table = validated.bgp_table()
-
-            if result is None:
-                result = bgp_table
             else:
-                result += bgp_table
+                raise KeyError("route-information")
+
+            if not parsed_base or "route-table" not in parsed_base:
+                # No routes matched the query in this table, e.g. for this address family.
+                continue
+
+            tables = parsed_base["route-table"]
+            if not isinstance(tables, list):
+                tables = [tables]
+
+            for table in tables:
+                if not table or "rt" not in table:
+                    continue
+
+                validated = JuniperBGPTable(**table)
+                bgp_table = validated.bgp_table()
+
+                if result is None:
+                    result = bgp_table
+                else:
+                    result += bgp_table
 
         except xmltodict.expat.ExpatError as err:
             _log.bind(error=str(err)).critical("Failed to decode XML")
@@ -112,7 +131,9 @@ def parse_juniper(output: Sequence[str]) -> "OutputDataModel":  # noqa: C901
 
         except ValidationError as err:
             _log.critical(err)
-            raise ParsingError(err) from err
+            raise ParsingError(
+                "Error parsing response data: {error}", error=validation_error_message(err)
+            ) from err
 
     return result
 

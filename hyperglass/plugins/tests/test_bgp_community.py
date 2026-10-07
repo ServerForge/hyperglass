@@ -34,6 +34,15 @@ CHECKS = (
     ("65000:192.0.2.1:1", False),
     ("gibberish", False),
     ("192.0.2.1", False),
+    ("no-export", True),
+    ("GSHUT", True),
+    ("65000:1 65000:2 no-advertise", True),
+    ("65000:1 gibberish", False),
+    ("  ", False),
+    (["65000:1"], True),
+    (["65000:1 65000:2", "no-export"], True),
+    (["65000:1", "gibberish"], False),
+    ([" "], False),
     (True, None),
     (type("FakeClass", (), {}), None),
 )
@@ -64,3 +73,5 @@ def test_bgp_community(state):
         query = type("Query", (), {"query_target": value})
         result = plugin.validate(query)
         assert result == expected, f"Invalid value {value!r}"
+        if result is False:
+            assert plugin.failure_reason == "Not a valid BGP community"

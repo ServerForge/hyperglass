@@ -9,7 +9,6 @@ from pydantic import Field, HttpUrl, ConfigDict, ValidationInfo, field_validator
 
 # Project
 from hyperglass.util import replace_placeholders
-from hyperglass.settings import Settings
 from hyperglass.constants import __version__
 
 # Local
@@ -111,18 +110,10 @@ class Params(ParamsPublic, HyperglassModel):
     @field_validator("plugins")
     def validate_plugins(cls: "Params", value: t.List[str]) -> t.List[str]:
         """Validate and register configured plugins."""
-        plugin_dir = Settings.app_path / "plugins"
+        # Project
+        from hyperglass.models.directive import plugin_files
 
-        if plugin_dir.exists():
-            # Path objects whose file names match configured file names, should work
-            # whether or not file extension is specified.
-            matching_plugins = (
-                f
-                for f in plugin_dir.iterdir()
-                if f.name.split(".")[0] in (p.split(".")[0] for p in value)
-            )
-            return [str(f) for f in matching_plugins]
-        return []
+        return plugin_files(value)
 
     @field_validator("web", mode="after")
     @classmethod

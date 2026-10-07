@@ -11,6 +11,7 @@ from pydantic import PrivateAttr, ValidationError
 from hyperglass.log import log
 from hyperglass.exceptions.private import ParsingError
 from hyperglass.models.parsing.frr import FRRBGPTable
+from hyperglass.models.parsing.common import validation_error_message
 
 # Local
 from .._output import OutputPlugin
@@ -36,6 +37,10 @@ def parse_frr(output: t.Sequence[str]) -> "OutputDataModel":
 
             _log.debug("Pre-parsed data", data=parsed)
 
+            if not parsed:
+                # FRR responds with an empty object if the prefix isn't in the table.
+                continue
+
             validated = FRRBGPTable(**parsed)
             bgp_table = validated.bgp_table()
 
@@ -58,7 +63,9 @@ def parse_frr(output: t.Sequence[str]) -> "OutputDataModel":
 
         except ValidationError as err:
             _log.critical(err)
-            raise ParsingError(err.errors()) from err
+            raise ParsingError(
+                "Error parsing response data: {error}", error=validation_error_message(err)
+            ) from err
 
     return result
 

@@ -13,6 +13,7 @@ from hyperglass.models.data.bgp_route import BGPRouteTable
 
 # Local
 from ..main import HyperglassModel
+from .common import parse_as_path
 
 RPKI_STATE_MAP = {
     "invalid": 0,
@@ -123,17 +124,31 @@ class JuniperRouteTableEntry(JuniperBase):
 
     @field_validator("as_path", mode="before")
     def validate_as_path(cls, value):
-        """Remove origin flags from AS_PATH."""
-        disallowed = ("E", "I", "?")
-        return [int(a) for a in value.split() if a not in disallowed]
+        """Get ASNs from the AS_PATH, including AS set `{}` & confederation `()` members.
+
+        Origin flags and the bracketed (`[]`) local AS, which isn't part of the received path, are
+        excluded.
+        """
+        return parse_as_path(value, exclude_local=True)
 
     @field_validator("communities", mode="before")
     def validate_communities(cls, value):
-        """Flatten community list."""
-        if value is not None:
-            flat = value.get("community", [])
-        else:
-            flat = []
+        """Flatten community list, including extended & large communities."""
+        if value is None:
+            return []
+        flat = []
+        # Keys were converted from e.g. `extended-community` to `extended_community`.
+        for key, communities in value.items():
+            if not key.endswith("community"):
+                continue
+            if not isinstance(communities, list):
+                communities = [communities]
+            for community in communities:
+                if isinstance(community, dict):
+                    # Elements with attributes are parsed to a dict.
+                    community = community.get("#text")
+                if community:
+                    flat.append(community)
         return flat
 
 

@@ -1,11 +1,11 @@
 """Data Models for Parsing Arista JSON Response."""
 
 # Standard Library
+import time
 import typing as t
-from datetime import datetime
 
 # Third Party
-from pydantic import ConfigDict
+from pydantic import Field, ConfigDict
 
 # Project
 from hyperglass.log import log
@@ -13,6 +13,7 @@ from hyperglass.models.data import BGPRouteTable
 
 # Local
 from ..main import HyperglassModel
+from .common import parse_as_path
 
 RPKI_STATE_MAP = {
     "invalid": 0,
@@ -78,11 +79,13 @@ class AristaRoutePath(_AristaBase):
     local_preference: int
     weight: int
     peer_entry: AristaPeerEntry
-    reason_not_bestpath: str
-    timestamp: int = int(datetime.utcnow().timestamp())
+    reason_not_bestpath: str = ""
+    # BGP AS Path and BGP Community queries don't include the timestamp or routeDetail block. In
+    # that case, the route is shown as having been received now.
+    timestamp: int = Field(default_factory=lambda: int(time.time()))
     next_hop: str
     route_type: AristaRouteType
-    route_detail: t.Optional[AristaRouteDetail]
+    route_detail: t.Optional[AristaRouteDetail] = None
 
 
 class AristaRouteEntry(_AristaBase):
@@ -105,15 +108,9 @@ class AristaBGPTable(_AristaBase):
 
     @staticmethod
     def _get_route_age(timestamp: int) -> int:
-        now = datetime.utcnow()
-        now_timestamp = int(now.timestamp())
-        return now_timestamp - timestamp
-
-    @staticmethod
-    def _get_as_path(as_path: str) -> t.List[str]:
-        if as_path == "":
-            return []
-        return [int(p) for p in as_path.split() if p.isdecimal()]
+        # `timestamp` is a Unix timestamp, so compare it to the current Unix timestamp, which, unlike
+        # a naive datetime's `timestamp()`, doesn't depend on the local timezone.
+        return int(time.time()) - timestamp
 
     def bgp_table(self: "AristaBGPTable") -> "BGPRouteTable":
         """Convert the Arista-formatted fields to standard parsed data model."""
@@ -123,20 +120,25 @@ class AristaBGPTable(_AristaBase):
             count += entries.total_paths
 
             for route in entries.bgp_route_paths:
-                as_path = self._get_as_path(route.as_path_entry.as_path)
+                as_path = parse_as_path(route.as_path_entry.as_path)
                 rpki_state = RPKI_STATE_MAP.get(route.route_type.origin_validity, 3)
 
                 # BGP AS Path and BGP Community queries do not include the routeDetail
                 # block. Therefore, we must verify it exists before including its data.
                 communities = []
                 if route.route_detail is not None:
-                    communities = route.route_detail.community_list
+                    communities = [
+                        *route.route_detail.community_list,
+                        *route.route_detail.ext_community_list,
+                        *route.route_detail.large_community_list,
+                    ]
 
                 # iBGP paths contain an empty AS_PATH array. If the AS_PATH is empty, we
-                # set the source_as to the router's local-as.
+                # set the source_as to the router's local-as. Otherwise, the source (origin) AS
+                # is the last AS in the path.
                 source_as = self.asn
                 if len(as_path) != 0:
-                    source_as = as_path[0]
+                    source_as = as_path[-1]
 
                 routes.append(
                     {

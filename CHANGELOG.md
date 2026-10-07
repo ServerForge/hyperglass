@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Query targets are now restricted to characters used by IP prefixes, BGP communities and AS path expressions, and `|` is only accepted as regex alternation (directly followed by a digit, `_`, `^` or `[`). Previously, crafted BGP community/AS path queries (or IPv6 zone IDs, e.g. `2001:db8::1%x"; id; "`) could inject commands into the device CLI, or into a shell on FRR, BIRD, OpenBGPD and TNSR. OpenBGPD AS path & community commands now also quote the query target.
 - **Behavior change:** regex `condition` patterns on directive `permit` rules now must match the entire query target (`re.fullmatch`) instead of only its beginning. `deny` rules still match the beginning of the query target.
 - A directive `deny` rule could be bypassed by querying a list of targets in which the denied value wasn't first.
+- **Behavior change:** BGP community query targets for built-in directives (except BIRD's, which use BIRD's `(65000,1)` syntax) are now validated as BGP communities (standard, extended, large, or well-known names such as `no-export`) by the built-in `ValidateBGPCommunity` plugin, which was never registered.
 - Error responses no longer include internal details passed to error messages, such as an SSH proxy's address and username, or an HTTP device's request URL, whose query string may contain credentials.
 - The Redis password is no longer shown in logs or by `hyperglass settings`.
 - Webhooks now identify the client by its connection (or a trusted proxy's `X-Forwarded-For`, see `HYPERGLASS_TRUSTED_PROXIES`), instead of request headers any client could set. Slack webhook messages escape request values, so e.g. a User-Agent of `<!channel>` can't notify a channel.
@@ -25,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Behavior change (API):** validation errors return HTTP 400 instead of 200, unknown devices return 404 instead of 500, and `GET /api/queries` returns query type IDs (as accepted by `POST /api/query`) instead of names. A device's name is also accepted as `queryLocation`.
 - `hyperglass clear-cache` now only deletes cached responses & lookups, so it's safe to run while hyperglass is running; previously it deleted all hyperglass state, breaking a running instance until it was restarted. hyperglass also only deletes its own keys from Redis at startup, instead of the whole database.
 - Cached responses now expire `cache.timeout` seconds after the query ran. Previously each cache hit extended the expiration, so a frequently repeated query was never refreshed. `cache.timeout: 0` disables caching.
+- Commands echoed by the device are removed from the output, by the built-in `RemoveCommand` plugin, which never ran.
 - Client errors, e.g. invalid input, are logged at the info level instead of as critical errors.
 
 ### Fixed
@@ -53,6 +55,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - HTTP devices: query templates using field names (e.g. `{query_target}`) or other braces failed; `verify_ssl`, `ssl_ca` and `ssl_client` were ignored; the device's `port` was ignored; IPv6 addresses didn't work; and unreachable devices caused a generic error.
 - Queries with only blank output returned an empty response instead of the "no output" message.
 - Structured output community filters matched by prefix, e.g. `65000:2345` also matched `65000:23456`.
+- Output plugins attached to a directive never ran, e.g. a redaction plugin was silently skipped.
+- An input plugin that permitted a target skipped later plugins that would deny it, and input transformations didn't build on each other. A plugin's `failure_reason` is now shown.
+- Plugins referenced by their path never loaded, and a non-Python file with a plugin's name (e.g. `redact.json`) crashed startup. Plugins that can't be found are now logged.
+- Arista AS path & community structured queries always failed. Arista route ages depended on the server's timezone, and the origin AS showed the neighbor AS.
+- FRR structured output failed for prefixes not in the table, locally originated routes, IPv6 next hops and invalid paths, and dropped AS set & confederation members.
+- Juniper AS path & community queries dropped IPv6 results, AS sets were removed from AS paths, and confederation & local AS paths failed.
+- Parsing errors and device errors (e.g. Junos `xnm:error`) showed a generic error instead of the actual problem.
+- Huawei BGP route queries with a string target (e.g. via the API) sent `None` to the device.
+- MikroTik output cleanup deleted route rows and missed repeated headers.
 - OpenGraph image generation crashed or deleted files (if the source image was named `opengraph.jpg`, was in `static/images`, or was named like a logo), failed for palette & 16-bit images, and turned transparent areas white. A device avatar in `static/images` crashed startup.
 - Errors in a Python configuration file's `main()` function were ignored, so hyperglass started with its default configuration.
 - Malformed configuration (e.g. invalid colors, empty or mapping-shaped `devices`, list-shaped directives, an empty `config.json`, a proxy with an unsupported platform) raised internal errors instead of validation errors with file & field context.
@@ -81,6 +92,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Docker Compose passes `HYPERGLASS_WORKERS` and `HYPERGLASS_TRUSTED_PROXIES` to the container, if they're set.
 - hyperglass now reads `hyperglass.env` from `HYPERGLASS_APP_PATH`, as documented (previously, only the sample systemd services read it). Environment variables take precedence.
 - Pixel values for `web.logo.width` and `web.logo.height`.
+- Extended & large communities are shown in Arista and FRR structured output, as are extended communities in Juniper structured output.
 - [#304](https://github.com/thatmattlove/hyperglass/pull/304): Add FRR structured output for BGP Routes - @chriswiggins
 
 ## 2.0.4 - 2024-06-30

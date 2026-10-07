@@ -1,4 +1,4 @@
-"""Remove anything before the command if found in output."""
+"""Validate BGP community query targets."""
 
 # Standard Library
 import typing as t
@@ -6,9 +6,6 @@ from ipaddress import ip_address
 
 # Third Party
 from pydantic import PrivateAttr
-
-# Project
-from hyperglass.state.hooks import use_state
 
 # Local
 from .._input import InputPlugin
@@ -23,6 +20,39 @@ if t.TYPE_CHECKING:
 _32BIT = 0xFFFFFFFF
 _16BIT = 0xFFFF
 EXTENDED_TYPES = ("target", "origin")
+# Well-known communities, which most platforms accept by name.
+WELL_KNOWN_COMMUNITIES = (
+    "accept-own",
+    "blackhole",
+    "graceful-shutdown",
+    "gshut",
+    "internet",
+    "llgr-stale",
+    "local-as",
+    "no-advertise",
+    "no-export",
+    "no-export-subconfed",
+    "no-llgr",
+    "no-peer",
+)
+# Platforms with built-in BGP community directives, e.g. `__hyperglass_juniper_bgp_community__`.
+# BIRD isn't included, as its directive takes communities in BIRD's own syntax, e.g. `(65000,1)`.
+COMMUNITY_DIRECTIVE_PLATFORMS = (
+    "arista_eos",
+    "cisco_ios",
+    "cisco_nxos",
+    "cisco_xr",
+    "frr",
+    "huawei",
+    "juniper",
+    "mikrotik",
+    "nokia_sros",
+    "openbgpd",
+    "tnsr",
+    "vyos",
+)
+# Platforms with built-in structured (table output) BGP community directives.
+COMMUNITY_TABLE_DIRECTIVE_PLATFORMS = ("arista_eos", "juniper")
 
 
 def check_decimal(value: str, size: int) -> bool:
@@ -90,23 +120,44 @@ def validate_large_community(value: str) -> bool:
     return False
 
 
+def validate_well_known(value: str) -> bool:
+    """Verify a community is a well-known community name, e.g. `no-export`."""
+    return value.lower() in WELL_KNOWN_COMMUNITIES
+
+
+def validate_community(value: str) -> bool:
+    """Verify a value is a BGP community in any supported format."""
+    validators = (
+        validate_decimal,
+        validate_new_format,
+        validate_large_community,
+        validate_well_known,
+    )
+    return any(validator(value) for validator in validators)
+
+
 class ValidateBGPCommunity(InputPlugin):
     """Validate a BGP community string."""
 
     _hyperglass_builtin: bool = PrivateAttr(True)
+    directives: t.Sequence[str] = (
+        *(f"__hyperglass_{p}_bgp_community__" for p in COMMUNITY_DIRECTIVE_PLATFORMS),
+        *(f"__hyperglass_{p}_bgp_community_table__" for p in COMMUNITY_TABLE_DIRECTIVE_PLATFORMS),
+    )
 
     def validate(self, query: "Query") -> "InputPluginValidationReturn":
-        """Ensure an input query target is a valid BGP community."""
+        """Ensure each query target is a valid BGP community, or space-separated communities."""
 
-        params = use_state("params")
-
-        if not isinstance(query.query_target, str):
+        # The UI sends targets as a list.
+        targets = query.query_target
+        if isinstance(targets, str):
+            targets = [targets]
+        if not isinstance(targets, (list, tuple)) or not all(isinstance(v, str) for v in targets):
             return None
 
-        for validator in (validate_decimal, validate_new_format, validate_large_community):
-            result = validator(query.query_target)
-            if result is True:
-                return True
+        communities = [community for target in targets for community in target.split()]
+        if len(communities) != 0 and all(validate_community(c) for c in communities):
+            return True
 
-        self.failure_reason = params.messages.invalid_input
+        self.failure_reason = "Not a valid BGP community"
         return False

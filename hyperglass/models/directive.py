@@ -3,6 +3,7 @@
 # Standard Library
 import re
 import typing as t
+from pathlib import Path
 from ipaddress import IPv4Network, IPv6Network, ip_network
 
 # Third Party
@@ -24,6 +25,31 @@ RuleValidation = t.Union[t.Literal["ipv4", "ipv6", "pattern"], None]
 PassedValidation = t.Union[bool, None]
 IPFamily = t.Literal["ipv4", "ipv6"]
 RuleTypeAttr = t.Literal["ipv4", "ipv6", "pattern", "none"]
+
+
+def plugin_files(plugins: t.Sequence[str]) -> t.List[str]:
+    """Get the paths of configured plugin files.
+
+    A plugin may be referenced by its path, or by its file name, with or without the `.py`
+    extension, in the `plugins` directory of the app path. Plugins that don't exist are skipped
+    with a warning.
+    """
+    plugin_dir = Settings.app_path / "plugins"
+    files = []
+    for plugin in (p.strip() for p in plugins):
+        if not plugin:
+            continue
+        path = Path(plugin).expanduser()
+        if not path.is_absolute():
+            path = plugin_dir / path
+        if path.suffix != ".py":
+            path = path.with_name(f"{path.name}.py")
+        if not path.is_file():
+            log.bind(plugin=plugin, path=str(path)).warning("Plugin file not found")
+            continue
+        if str(path) not in files:
+            files.append(str(path))
+    return files
 
 
 class Input(HyperglassModel):
@@ -320,18 +346,7 @@ class Directive(HyperglassUniqueModel, unique_by=("id", "table_output")):
     @field_validator("plugins")
     def validate_plugins(cls: "Directive", plugins: t.List[str]) -> t.List[str]:
         """Validate and register configured plugins."""
-        plugin_dir = Settings.app_path / "plugins"
-
-        if plugin_dir.exists():
-            # Path objects whose file names match configured file names, should work
-            # whether or not file extension is specified.
-            matching_plugins = (
-                f
-                for f in plugin_dir.iterdir()
-                if f.name.split(".")[0] in (p.split(".")[0] for p in plugins)
-            )
-            return [str(f) for f in matching_plugins]
-        return []
+        return plugin_files(plugins)
 
     def frontend(self: "Directive") -> t.Dict[str, t.Any]:
         """Prepare a representation of the directive for the UI."""
@@ -360,6 +375,11 @@ class BuiltinDirective(Directive, unique_by=("id", "table_output", "platforms"))
 
     _hyperglass_builtin: bool = PrivateAttr(True)
     platforms: Series[str] = []
+
+    @field_validator("plugins")
+    def validate_plugins(cls: "BuiltinDirective", plugins: t.List[str]) -> t.List[str]:
+        """Ignore plugin files, since built-in plugins are associated with directives by ID."""
+        return []
 
 
 DirectiveT = t.Union[BuiltinDirective, Directive]

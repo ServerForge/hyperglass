@@ -8,6 +8,9 @@ from inspect import isclass, getmembers
 from pathlib import Path
 from importlib.util import module_from_spec, spec_from_file_location
 
+# Project
+from hyperglass.exceptions.private import PluginError
+
 # Local
 from . import _builtin
 from ._input import InputPlugin
@@ -45,6 +48,8 @@ def _register_from_module(module: t.Any, **kwargs: t.Any) -> t.Tuple[str, ...]:
 
 def _module_from_file(file: Path) -> t.Any:
     """Import a plugin module from its file Path object."""
+    if file.suffix != ".py":
+        raise PluginError("Plugin '{p}' is not a Python file", p=str(file))
     plugins_dir = Path(__file__).parent / "external"
     dst = plugins_dir / f"imported_{file.name}"
     shutil.copy2(file, dst)

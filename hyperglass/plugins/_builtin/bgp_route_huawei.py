@@ -33,8 +33,12 @@ class BGPRoutePluginHuawei(InputPlugin):
     def transform(self, query: "Query") -> InputPluginTransformReturn:
         target = query.query_target
 
-        if not target or not isinstance(target, list) or len(target) == 0:
-            return None
+        if not target:
+            return target
+
+        # The target is a string, or a list of strings (e.g. from the UI).
+        if isinstance(target, str):
+            target = [target]
 
         target = target[0].strip()
 

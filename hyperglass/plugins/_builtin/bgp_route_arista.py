@@ -10,6 +10,7 @@ from pydantic import PrivateAttr, ValidationError
 # Project
 from hyperglass.log import log
 from hyperglass.exceptions.private import ParsingError
+from hyperglass.models.parsing.common import validation_error_message
 from hyperglass.models.parsing.arista_eos import AristaBGPTable
 
 # Local
@@ -36,6 +37,10 @@ def parse_arista(output: t.Sequence[str]) -> "OutputDataModel":
 
             _log.debug("Pre-parsed data", data=parsed)
 
+            if not parsed["vrfs"]:
+                # No routes matched the query.
+                continue
+
             vrf = list(parsed["vrfs"].keys())[0]
             routes = parsed["vrfs"][vrf]
 
@@ -61,7 +66,9 @@ def parse_arista(output: t.Sequence[str]) -> "OutputDataModel":
 
         except ValidationError as err:
             _log.critical(err)
-            raise ParsingError(err.errors()) from err
+            raise ParsingError(
+                "Error parsing response data: {error}", error=validation_error_message(err)
+            ) from err
 
     return result
 
