@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The `favicon.ico` `<link/>` tag pointed to a nonexistent `favicon-64x64.ico` file.
 - `hyperglass system-info` failed with `KeyError: 'hyperglass_directory'`.
 - Removed DSA key support from SSH proxy tunnels; DSA keys are no longer supported by paramiko 4+.
+- `HYPERGLASS_DISABLE_UI` had no effect in Docker, because it was misspelled in `compose.yaml`.
+- Docker images included the local UI build output (several GB in a development checkout), Python caches and git history from the build context.
 - [#280](https://github.com/thatmattlove/hyperglass/issues/280): Fix: `condition: None` caused error in directive @Jimmy01240397
 - [#306](https://github.com/thatmattlove/hyperglass/issues/306): Fix: allow integer values in ext_community_list_raw field for Arista BGP - @cooperwinser
 - [#311](https://github.com/thatmattlove/hyperglass/issues/311): Fix: device and directive errors.
@@ -45,7 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - `HYPERGLASS_WORKERS` environment variable, to set the number of web server workers.
 - Query rate limiting, enabled by default at 60 queries per minute per client. Configure it with the new `rate_limit` section; see the Rate Limiting docs.
-- `HYPERGLASS_TRUSTED_PROXIES` environment variable, for reverse proxies trusted to set the client address via `X-Forwarded-For`. Defaults to `127.0.0.1,::1`.
+- `HYPERGLASS_TRUSTED_PROXIES` environment variable, for reverse proxies trusted to set the client address via `X-Forwarded-For`. Defaults to `127.0.0.1,::1`. When running hyperglass in Docker behind a reverse proxy, see the new "Behind a Reverse Proxy" section of the Docker docs.
+- Docker Compose passes `HYPERGLASS_WORKERS` and `HYPERGLASS_TRUSTED_PROXIES` to the container, if they're set.
 - [#304](https://github.com/thatmattlove/hyperglass/pull/304): Add FRR structured output for BGP Routes - @chriswiggins
 
 ## 2.0.4 - 2024-06-30

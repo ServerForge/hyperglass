@@ -58,3 +58,44 @@ systemctl start hyperglass
 ```
 
 </Steps>
+
+## Behind a Reverse Proxy
+
+When hyperglass runs in Docker behind a [reverse proxy](reverse-proxy.mdx) on the same host, requests from the reverse proxy reach hyperglass from the Docker network's gateway address, not from `127.0.0.1`. hyperglass only uses the client address set by a reverse proxy (`X-Forwarded-For`) when the request comes from a trusted proxy (`HYPERGLASS_TRUSTED_PROXIES`), so until the gateway is trusted, every request is logged as coming from the gateway, and all clients share one [rate limit](/configuration/config/rate-limiting.mdx).
+
+<Steps>
+
+### Publish hyperglass on the loopback address only
+
+Clients must only be able to reach hyperglass through the reverse proxy: connections Docker forwards to the container (such as IPv6 connections to the published port) can also come from the gateway address, and could then set their own client address. In `compose.yaml`, change the `ports` entry to:
+
+```yaml filename="compose.yaml"
+ports:
+    - "127.0.0.1:${HYPERGLASS_PORT-8001}:${HYPERGLASS_PORT-8001}"
+```
+
+Then point your reverse proxy to `127.0.0.1:8001`, for example `proxy_pass http://127.0.0.1:8001;{:nginx}` in the NGINX sample.
+
+### Trust the Docker network's gateway
+
+Find the gateway address of hyperglass's Docker network:
+
+```shell copy
+docker network inspect hyperglass_default --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+```
+
+Add it to `/etc/hyperglass/hyperglass.env`, for example:
+
+```shell filename="/etc/hyperglass/hyperglass.env"
+HYPERGLASS_TRUSTED_PROXIES=172.18.0.1
+```
+
+Then restart hyperglass: `systemctl restart hyperglass{:shell}`
+
+<Callout type="info">
+    The gateway address can change if the Docker network is recreated with a different subnet. To
+    avoid updating it, you can trust Docker's default address range instead, e.g.
+    `HYPERGLASS_TRUSTED_PROXIES=172.16.0.0/12`.
+</Callout>
+
+</Steps>

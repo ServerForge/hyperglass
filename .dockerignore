@@ -1,14 +1,18 @@
+# Patterns only match at the root of the build context, unless prefixed with `**/`.
+.git
 hyperglass/hyperglass/static
 **/node_modules
 **/node_modules/.pnpm
-.DS_Store
+**/.DS_Store
 hyperglass/ui/.env*
-hyperglass.json
-custom.*[js, html]
-.next
-out/
+# Written to the UI directory in development mode.
+hyperglass/ui/hyperglass.json
+hyperglass/ui/custom.js
+hyperglass/ui/custom.html
+**/.next
+**/out
 fonts/
-__pycache__
+**/__pycache__
 .python-version
 .venv
 .mypy_cache
@@ -40,5 +44,5 @@ nosetests.xml
 coverage.xml
 *,cover
 *.rdb
-*.py[cod]
+**/*.py[cod]
 .ipynb*
